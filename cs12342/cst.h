@@ -5,8 +5,8 @@
 #include <linux/types.h>
 
 
-#ifndef _LINUX_SYS_H
-#define _LINUX_SYS_H
+#ifndef _LINUX_CST_DECLN_H
+#define _LINUX_CST_DECLN_H
 
 
 

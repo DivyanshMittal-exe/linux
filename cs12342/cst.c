@@ -7,6 +7,7 @@
 #include <linux/errno.h>
 #include <linux/printk.h>
 #include <linux/init.h>
+#include <linux/syscalls.h>
 // #include <linux/sched/signal.h>
 // #include <linux/sched.h>
 
@@ -112,7 +113,7 @@ int  sys_fetch_impl(struct pid_ctxt_switch *stats)
             return -ESRCH;
         }else{
 
-            printk(KERN_INFO "ninvctxt: %d , nvctxt->%d : %d!\n", task->nivcsw, task->nvcsw, task->pid);
+            printk(KERN_INFO "ninvctxt->%lu , nvctxt->%lu : %d!\n", task->nivcsw, task->nvcsw, task->pid);
 
 
             // get_task_struct(task);
