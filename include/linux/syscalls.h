@@ -73,6 +73,8 @@ struct mount_attr;
 struct landlock_ruleset_attr;
 enum landlock_rule_type;
 
+#include <linux/cst.h>
+
 #include <linux/types.h>
 #include <linux/aio_abi.h>
 #include <linux/capability.h>
@@ -86,6 +88,37 @@ enum landlock_rule_type;
 #include <linux/key.h>
 #include <linux/personality.h>
 #include <trace/syscall.h>
+
+
+#ifndef _LINUX_CST_DECLN_H
+#define _LINUX_CST_DECLN_H
+
+
+
+struct pid_node {
+    pid_t pid ; /* process id */
+    struct list_head next_prev_list ; /* contains pointers to previous and next elements */
+};
+
+
+struct pid_ctxt_switch {
+    unsigned long ninvctxt; /* Count of involuntary context switches */
+    unsigned long nvctxt; /* Count of voluntary context switches */
+};
+
+#endif
+
+
+
+#ifndef MY_SYSCALL
+#define MY_SYSCALL
+
+asmlinkage long sys_register(pid_t pid);
+asmlinkage long sys_fetch(struct pid_ctxt_switch *stats);
+asmlinkage long sys_deregister(pid_t pid);
+
+#endif
+
 
 #ifdef CONFIG_ARCH_HAS_SYSCALL_WRAPPER
 /*
