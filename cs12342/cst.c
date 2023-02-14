@@ -42,6 +42,18 @@ int  sys_register_impl(pid_t pid)
     if (pid < 1)
         return -EINVAL;
 
+
+    struct pid_node *node;
+
+    list_for_each_entry(node, &cst_list_head, next_prev_list) {
+	if(node->pid == pid){
+		printk(KERN_INFO "This PID already present, not added again : %d!\n", pid);
+
+		return 0;
+	}
+    }
+
+
     // int pid_exists = 0;
     // struct task_struct *task;
 
@@ -66,29 +78,7 @@ int  sys_register_impl(pid_t pid)
     }
     return 0;
 
-    // rcu_read_lock();
-    // for_each_process(task) {
-    // 	if (task->pid == pid) {
-    // 		// pid_exists = true;
-    // 		struct pid_node *node_to_add =
-    // 			kmalloc(sizeof(struct pid_node), GFP_KERNEL);
-    // 		if (!node_to_add) {
-    // 			return -ENOMEM;
-    // 		}
 
-    // 		node_to_add->pid = pid;
-    // 		list_add(&node_to_add->next_prev_list, &cst_list_head);
-
-    // 		printk(KERN_INFO "Yay found : %d!\n", task->pid);
-
-    // 		return 0;
-    // 	} else {
-    // 		printk(KERN_INFO "Looking at: %d\n", task->pid);
-    // 	}
-    // }
-    // rcu_read_unlock();
-
-    // return -ESRCH;
 }
 
 int  sys_fetch_impl(struct pid_ctxt_switch *stats)
@@ -116,10 +106,10 @@ int  sys_fetch_impl(struct pid_ctxt_switch *stats)
             printk(KERN_INFO "ninvctxt->%lu , nvctxt->%lu : %d!\n", task->nivcsw, task->nvcsw, task->pid);
 
 
-            // get_task_struct(task);
-            stats_kernel->ninvctxt += task->nivcsw;
+//	    get_task_struct(task);
+            stats_kernel->ninvctxt .+= task->nivcsw;
             stats_kernel->nvctxt += task->nvcsw;
-            // put_task_struct(task);
+//	    put_task_struct(task);
         }
     }
 
