@@ -1,0 +1,1 @@
+cmd_/home/div/Codes/signal_module/signal_module.mod := printf '%s\n'   signal_module.o | awk '!x[$$0]++ { print("/home/div/Codes/signal_module/"$$0) }' > /home/div/Codes/signal_module/signal_module.mod

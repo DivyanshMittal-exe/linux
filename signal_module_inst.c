@@ -7,42 +7,22 @@
 #include <linux/kstrtox.h>
 #include <linux/slab.h>
 #include <linux/sched.h>
-#include <linux/spinlock.h>
-
 
 #define procfs_name "sig_target"
 #define PROCFS_MAX_SIZE 	2048
 
-#define max_req_possible 10
-static int req_top = -1;
-
-
-static struct timer_list sig_timer;
-
-
-struct sig_struct {
-    pid_t pid;
-    unsigned long int sig;
-};
-
-
-static struct sig_struct sig_stack[max_req_possible];
-
-
-
 static struct proc_dir_entry *sig_proc_file;
 
 
-static DEFINE_SPINLOCK(sig_stack_lock);
+static DEFINE_SPINLOCK(sig_proc_lock);
 
+unsigned long flags;
 
 
 
 
 MODULE_AUTHOR("Divyansh Mittal");
 MODULE_LICENSE("GPL");
-
-
 
 ssize_t	sig_proc_write_handler(struct file *file, const char __user *buf, size_t count, loff_t *ppos){
 
@@ -53,16 +33,22 @@ ssize_t	sig_proc_write_handler(struct file *file, const char __user *buf, size_t
     int f_part = 0;
     int kstrtoint_ret;
     pid_t pid;
+    int pid_size;
+    int sig_call_starts_at;
+    int sig_call_size;
+    struct task_struct *task;
+
     unsigned int sig_to_call;
-    struct sig_struct t;
 
 
-
+    spin_lock_irqsave(&sig_proc_lock, flags);
 
 
     data = kmalloc(count + 1, GFP_KERNEL);
     if (!data) {
         printk(KERN_ALERT "Data not allocated: %lu \n", count + 1);
+        spin_unlock_irqrestore(&sig_proc_lock, flags);
+
         return -ENOMEM;
     }
 
@@ -71,18 +57,28 @@ ssize_t	sig_proc_write_handler(struct file *file, const char __user *buf, size_t
     if (copy_from_user(data, buf, count)){
         printk(KERN_ALERT "Data not copied\n");
         kfree(data);
+        spin_unlock_irqrestore(&sig_proc_lock, flags);
+
         return -EFAULT;
+
     }
 
 
     for ( i = 0; i < count; i++) {
         if(data[i] == ','){
-            data[i] = '\0';
             break;
         }
         ++f_part;
     }
+
+    data[f_part] = '\0';
+
     data[count] = '\0';
+
+
+    pid_size = f_part;
+    sig_call_starts_at = f_part + 2;
+    sig_call_size = count - f_part - 2;
 
     printk(KERN_ALERT "Data is %s\n",data);
 
@@ -90,76 +86,57 @@ ssize_t	sig_proc_write_handler(struct file *file, const char __user *buf, size_t
     kstrtoint_ret = kstrtoint(data, 10, (int *) &pid);
     if (kstrtoint_ret){
         printk(KERN_ALERT "Data not converted to pid \n");
+
         kfree(data);
+        spin_unlock_irqrestore(&sig_proc_lock, flags);
+
         return kstrtoint_ret;
     }
 
 //#10 is base here
-    kstrtoint_ret = kstrtouint(&data[f_part + 2], 10, &sig_to_call);
+    kstrtoint_ret = kstrtouint(&data[sig_call_starts_at], 10, &sig_to_call);
     if (kstrtoint_ret){
         printk(KERN_ALERT "Data not converted to signal\n");
+
         kfree(data);
+        spin_unlock_irqrestore(&sig_proc_lock, flags);
+
         return kstrtoint_ret;
     }
 
+//    kill_ret = kill_pid(find_vpid(pid), sig_to_call, 1);
 
-    t.pid = pid;
-    t.sig = sig_to_call;
+    rcu_read_lock();
+    task = pid_task(find_vpid(pid), PIDTYPE_PID);
+    rcu_read_unlock();
 
 
-    spin_lock(&sig_stack_lock);
+//    task = find_get_task_by_vpid (pid);
+    if (!task) {
+        printk(KERN_ALERT "Task does not exist\n");
+        kfree(data);
+        spin_unlock_irqrestore(&sig_proc_lock, flags);
 
-    req_top+=1;
-    if(req_top >= max_req_possible){
-        printk(KERN_ALERT "Too many signals, stack full\n");
-        spin_unlock(&sig_stack_lock);
-
-        return -ENOMEM;
+        return -ESRCH;
     }
-
-    sig_stack[req_top] = t;
-    printk(KERN_INFO "Placed on stack at %d\n", req_top);
-
-
-    spin_unlock(&sig_stack_lock);
+//#0 is privelege level, here unpriveleged
+    send_sig(sig_to_call,task,0);
 
 
-return count;
+    printk(KERN_INFO "Sent %d the sig %du\n", pid, sig_to_call);
+
+    kfree(data);
+    spin_unlock_irqrestore(&sig_proc_lock, flags);
+
+
+
+    return count;
 
 }
 
 static const struct proc_ops sig_proc_ops = {
         .proc_write = sig_proc_write_handler,
 };
-
-void actual_signal_handlers(struct timer_list *t_l) {
-
-    struct task_struct *task;
-    spin_lock(&sig_stack_lock);
-
-    while(req_top >= 0){
-
-        rcu_read_lock();
-        task = pid_task(find_vpid(sig_stack[req_top].pid), PIDTYPE_PID);
-        rcu_read_unlock();
-
-
-        if (!task) {
-            printk(KERN_ALERT "Task does not exist\n");
-        }else{
-            send_sig(sig_stack[req_top].sig,task,0);
-            printk(KERN_INFO "Sent %d the sig %lu which was at %d\n", sig_stack[req_top].pid, sig_stack[req_top].sig, req_top);
-        }
-
-        --req_top;
-    }
-
-    spin_unlock(&sig_stack_lock);
-
-
-    mod_timer(&sig_timer, jiffies + msecs_to_jiffies(1000));
-}
-
 
 
 int init_module()
@@ -174,16 +151,11 @@ int init_module()
 
     printk(KERN_INFO "/proc/%s created\n", procfs_name);
 
-    sig_timer.expires = jiffies + msecs_to_jiffies(1000);
-    sig_timer.function = actual_signal_handlers;
-    add_timer(&sig_timer);
-
     return 0;
 }
 
 void cleanup_module()
 {
-    del_timer(&sig_timer);
     remove_proc_entry(procfs_name, sig_proc_file);
     printk(KERN_INFO "/proc/%s removed\n", procfs_name);
 }
