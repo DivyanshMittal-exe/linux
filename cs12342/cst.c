@@ -107,7 +107,7 @@ int  sys_fetch_impl(struct pid_ctxt_switch *stats)
 
 
 //	    get_task_struct(task);
-            stats_kernel->ninvctxt .+= task->nivcsw;
+            stats_kernel->ninvctxt += task->nivcsw;
             stats_kernel->nvctxt += task->nvcsw;
 //	    put_task_struct(task);
         }
