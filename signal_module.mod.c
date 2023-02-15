@@ -38,16 +38,15 @@ __used __section("__versions") = {
 	{ 0x8c8569cb, "kstrtoint" },
 	{ 0x37a0cba, "kfree" },
 	{ 0x3b6c41ea, "kstrtouint" },
+	{ 0x151b548, "kmalloc_caches" },
+	{ 0xcc174791, "kmalloc_trace" },
 	{ 0xba8fbd64, "_raw_spin_lock" },
 	{ 0xb5b54b34, "_raw_spin_unlock" },
-	{ 0x87a21cb3, "__ubsan_handle_out_of_bounds" },
 	{ 0xd0da656b, "__stack_chk_fail" },
 	{ 0x15ba50a6, "jiffies" },
 	{ 0xc38c83b8, "mod_timer" },
-	{ 0x8d522714, "__rcu_read_lock" },
 	{ 0x30f83c79, "find_vpid" },
 	{ 0x4660ad3c, "pid_task" },
-	{ 0x2469810f, "__rcu_read_unlock" },
 	{ 0xa733f4a9, "send_sig" },
 	{ 0xa454f49b, "proc_create" },
 	{ 0x24d273d1, "add_timer" },
@@ -59,4 +58,4 @@ __used __section("__versions") = {
 MODULE_INFO(depends, "");
 
 
-MODULE_INFO(srcversion, "6855B47AD66C079A70012DB");
+MODULE_INFO(srcversion, "F1FFD338325DF3652063A04");

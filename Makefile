@@ -1,6 +1,6 @@
 obj-m = signal_module.o
 
-PID := 2150
+PID := 2752
 
 KVERSION = $(shell uname -r)
 all:
