@@ -42,68 +42,30 @@
 #include <linux/sched.h>
 
 
-	//struct rb_root_cached rb_nd_root = RB_ROOT_CACHED;
+
+static inline int on_rm_rq(struct sched_rm_entity *rm_se)
+{
+	return !list_empty(&(rm_se->list_element));
+}
 
 
-	//static struct task_struct *__pick_next_task_rm(struct rq *rq)
-	//{
-	//	struct *rm_rq = &rq->rm;
-	////	struct rb_root_cached = rm_rq->root;
-	//
-	//	struct task_struct *p;
-	//
-	//
-	//	struct rb_node *left = rb_first_cached(&rm_rq->root);
-	//
-	//	if (!left)
-	//		return NULL;
-	//
-	//	struct sched_rm_entity *rm_rb_n = container_of(left, struct sched_rm_entity, rb_nd);
-	//
-	//	p = rm_rb_n->p;
-	//
-	//	return  p
-	//
-	////	return pick_next_task_fair(rq, NULL, NULL);
-	//}
-
-	//static inline bool __rm_less(struct rb_node *a, const struct rb_node *b)
-	//{
-	//	stuct sched_rm_entity *f =   rb_entry((a), struct sched_rm_entity, rb_nd);
-	//	stuct sched_rm_entity *s =   rb_entry((b), struct sched_rm_entity, rb_nd);
-	//	return f->rm_deadline < s->rm_deadline;
-	//}
-
-	//static void enqueue_task_rm(struct rq *rq, struct task_struct *p, int flags){
-	//
-	//
-	//	struct sched_rm_entity *rm_ee= &(p->rm_e);
-	//	struct rm_rq *rm_rq_e = &(rq->rm);
-	//	rb_add_cached(&(rm_ee->rb_nd), &(rm_rq_e -> root), __rm_less);
-	//
-	//}
+static void enqueue_task_rm(struct rq *rq, struct task_struct *p, int flags){
 
 
-	static void enqueue_task_rm(struct rq *rq, struct task_struct *p, int flags){
+	struct sched_rm_entity *rm_of_task= &(p->rm);
+	struct rm_rq *rm_of_q = &(rq->rm);
 
+	list_add(&(rm_of_task->list_element),&(rm_of_q->list_root));
 
-	struct sched_rm_entity *rm_ee= &(p->rm_e);
-	struct rm_rq *rm_rq_e = &(rq->rm);
-
-	list_add(&(rm_ee->list_element),&(rm_rq_e->list_root));
-
-	//	rb_add_cached(&(rm_ee->rb_nd), &(rm_rq_e -> root), __rm_less);
 
 }
 
 
 static void dequeue_task_rm(struct rq *rq, struct task_struct *p, int flags){
-	struct sched_rm_entity *rm_ee= &(p->rm_e);
-	struct rm_rq *rm_rq_e = &(rq->rm);
+	struct sched_rm_entity *rm_of_task= &(p->rm);
+	struct rm_rq *rm_of_q = &(rq->rm);
 
-	list_del(&(rm_ee->list_element));
-	//	rb_erase_cached(&(rm_ee->rb_nd), &(rm_rq_e -> root));
-
+	list_del(&(rm_of_task->list_element));
 
 }
 
@@ -138,43 +100,199 @@ static void dequeue_task_rm(struct rq *rq, struct task_struct *p, int flags){
 //}
 
 
-static void yield_task_rm(struct rq *rq)
-{
-	/*
-	 * We make the task go to sleep until its current deadline by
-	 * forcing its runtime to zero. This way, update_curr_dl() stops
-	 * it and the bandwidth timer will wake it up and will give it
-	 * new scheduling parameters (thanks to dl_yielded=1).
-	 */
-	rq->curr->rm.rm_yielded = 1;
-
-	update_rq_clock(rq);
-	update_curr_rm(rq);
-	/*
-	 * Tell update_rq_clock() that we've just updated,
-	 * so we don't do microscopic update in schedule()
-	 * and double the fastpath cost.
-	 */
-	rq_clock_skip_update(rq);
-}
-
-
-//static void check_preempt_curr_rm(struct rq *rq, struct task_struct *p,
-//				  int flags){
+//static void yield_task_rm(struct rq *rq)
+//{
+//	/*
+//	 * We make the task go to sleep until its current deadline by
+//	 * forcing its runtime to zero. This way, update_curr_dl() stops
+//	 * it and the bandwidth timer will wake it up and will give it
+//	 * new scheduling parameters (thanks to dl_yielded=1).
+//	 */
+//	rq->curr->rm.rm_yielded = 1;
 //
+//	update_rq_clock(rq);
+//	update_curr_rm(rq);
+//	/*
+//	 * Tell update_rq_clock() that we've just updated,
+//	 * so we don't do microscopic update in schedule()
+//	 * and double the fastpath cost.
+//	 */
+//	rq_clock_skip_update(rq);
 //}
 
-static struct task_struct *__pick_next_task_rm(struct rq *rq)
+
+
+
+
+static void set_next_task_rm(struct rq *rq, struct task_struct *p, bool first)
 {
-	struct task_struct *p;
+	struct sched_rm_entity *rm_of_task= &(p->rm);
+	struct rm_rq *rm_of_q = &(rq->rm);
 
-	p = pick_task_dl(rq);
-	if (p)
-		set_next_task_dl(rq, p, true);
+	p->se.exec_start = rq_clock_task(rq);
 
-	return p;
+
+
+//	if (!list_empty(&(rm_of_task->list_element))){
+//
+//		struct sched_statistics *stats;
+//
+//		if (!schedstat_enabled())
+//			return;
+//
+//	}
+//		update_stats_wait_end_dl(dl_rq, dl_se);
+
+//
+//	/* You can't push away the running task */
+//	dequeue_pushable_dl_task(rq, p);
+
+	if (!first)
+		return;
+
+	// MP not needed as #defined only for arm
+//	if (hrtick_enabled_dl(rq))
+//		start_hrtick_dl(rq, p);
+
+
+//	if (rq->curr->sched_class != &rm_sched_class)
+//		update_dl_rq_load_avg(rq_clock_pelt(rq), rq, 0);
+
+//	deadline_queue_push_tasks(rq);
 }
 
+
+
+
+
+static struct task_struct *pick_next_task_rm(struct rq *rq)
+{
+	struct sched_rm_entity *rm_entities;
+	struct list_head *pos;
+
+	struct sched_rm_entity  *min_entity = nullptr;
+	u64 min_deadline = UINT64_MAX;
+
+//	struct sched_rm_entity *rm_of_task= &(p->rm);
+	struct rm_rq *rm_of_q = &(rq->rm);
+
+
+	list_for_each(pos, &(rm_of_q->list_root)) {
+		rm_entities = list_entry(pos, struct sched_rm_entity, list_element);
+
+		if (ktime_get_ns() > rm_entities->deadline) {
+			entry->deadline += rm_entities->dl_deadline;
+			entry->runtime = rm_entities->dl_runtime;
+		}
+
+		if (rm_entities->runtime > 0 && rm_entities->deadline < min_deadline) {
+			min_deadline = rm_entities->deadline;
+			min_entity = rm_entities;
+		}
+	}
+
+	if(min_entity == nullptr){
+		return nullptr;
+	}
+
+	task_struct *to_run = container_of(min_entity, struct task_struct, rm);
+
+	if (to_run){
+		set_next_task_rm(rq, to_run, true);
+	}
+
+	return to_run;
+
+
+}
+
+
+
+
+
+static void update_curr_rm(struct rq *rq)
+{
+
+	struct task_struct *curr = rq->curr;
+	struct sched_rm_entity *rm_se = &curr->rm;
+	u64 delta_exec, scaled_delta_exec;
+	int cpu = cpu_of(rq);
+	u64 now;
+
+	if (!on_rm_rq(rm_se))
+		return;
+
+	now = rq_clock_task(rq);
+	delta_exec = now - curr->se.exec_start;
+
+	update_current_exec_runtime(curr, now, delta_exec);
+
+	unsigned long scale_freq = arch_scale_freq_capacity(cpu);
+	unsigned long scale_cpu = arch_scale_cpu_capacity(cpu);
+
+	scaled_delta_exec = cap_scale(delta_exec, scale_freq);
+	scaled_delta_exec = cap_scale(scaled_delta_exec, scale_cpu);
+
+	rm_se->runtime -= scaled_delta_exec;
+
+}
+
+
+static void put_prev_task_rm(struct rq *rq, struct task_struct *p)
+{
+	struct sched_rm_entity *rm_of_task= &(p->rm);
+	struct rm_rq *rm_of_q = &(rq->rm);
+
+//	if (on_dl_rq(&p->dl))
+//		update_stats_wait_start_dl(dl_rq, dl_se);
+
+	update_curr_rm(rq);
+
+}
+
+
+
+static void check_preempt_curr_rm(struct rq *rq, struct task_struct *p,
+				  int flags)
+{
+		struct sched_rm_entity *a = &p->rm;
+		struct sched_rm_entity *b = &rq->curr->rm;
+
+		if(a->deadline < b-> deadline){
+			resched_curr(rq);
+			return ;
+		}
+
+
+
+}
+
+
+static void yield_task_rm(struct rq *rq)
+{
+
+
+		update_rq_clock(rq);
+		update_curr_rm(rq);
+
+		rq_clock_skip_update(rq);
+}
+
+
+static void task_tick_rk(struct rq *rq, struct task_struct *p, int queued)
+{
+		update_curr_rm(rq);
+
+//		update_dl_rq_load_avg(rq_clock_pelt(rq), rq, 1);
+//		/*
+//	 * Even when we have runtime, update_curr_dl() might have resulted in us
+//	 * not being the leftmost task anymore. In that case NEED_RESCHED will
+//	 * be set and schedule() will start a new hrtick for the next task.
+//	 */
+//		if (hrtick_enabled_dl(rq) && queued && p->dl.runtime > 0 &&
+//		    is_leftmost(p, &rq->dl))
+//			start_hrtick_dl(rq, p);
+}
 
 DEFINE_SCHED_CLASS(rm) = {
 
@@ -182,41 +300,31 @@ DEFINE_SCHED_CLASS(rm) = {
 	.dequeue_task		= dequeue_task_rm,
 	.yield_task		= yield_task_rm,
 
-	//	.check_preempt_curr	= check_preempt_rm,
+	.check_preempt_curr	= check_preempt_curr_rm,
 
-	.pick_next_task		= __pick_next_task_rm,
-	.put_prev_task		= put_prev_task_fair,
-	.set_next_task          = set_next_task_fair,
-
-#ifdef CONFIG_SMP
-	.balance		= balance_fair,
-	.pick_task		= pick_task_fair,
-	.select_task_rq		= select_task_rq_fair,
-	.migrate_task_rq	= migrate_task_rq_fair,
-
-	.rq_online		= rq_online_fair,
-	.rq_offline		= rq_offline_fair,
-
-	.task_dead		= task_dead_fair,
-	.set_cpus_allowed	= set_cpus_allowed_common,
-#endif
-
-	.task_tick		= task_tick_fair,
-	.task_fork		= task_fork_fair,
-
-	.prio_changed		= prio_changed_fair,
-	.switched_from		= switched_from_fair,
-	.switched_to		= switched_to_fair,
-
-	.get_rr_interval	= get_rr_interval_fair,
-
-	.update_curr		= update_curr_rm,
-
-#ifdef CONFIG_FAIR_GROUP_SCHED
-	.task_change_group	= task_change_group_fair,
-#endif
-
-#ifdef CONFIG_UCLAMP_TASK
-	.uclamp_enabled		= 1,
-#endif
+	.pick_next_task		= pick_next_task_rm,
+	.put_prev_task		= put_prev_task_rm,
+	.set_next_task          = set_next_task_rm,
+//
+//
+//	#ifdef CONFIG_SMP
+//		.balance		= balance_dl,
+//		.pick_task		= pick_task_dl,
+//		.select_task_rq		= select_task_rq_dl,
+//		.migrate_task_rq	= migrate_task_rq_dl,
+//		.set_cpus_allowed       = set_cpus_allowed_dl,
+//		.rq_online              = rq_online_dl,
+//		.rq_offline             = rq_offline_dl,
+//		.task_woken		= task_woken_dl,
+//		.find_lock_rq		= find_lock_later_rq,
+//	#endif
+//
+//		.task_tick		= task_tick_dl,
+//		.task_fork              = task_fork_dl,
+//
+//		.prio_changed           = prio_changed_dl,
+//		.switched_from		= switched_from_dl,
+//		.switched_to		= switched_to_dl,
+//
+		.update_curr		= update_curr_rm,
 };
