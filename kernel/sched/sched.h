@@ -757,6 +757,48 @@ struct dl_rq {
 	u64			bw_ratio;
 };
 
+
+
+
+/* RM runqueue: */
+struct rm_rq {
+	//	struct rb_root_cached	root;
+	struct list_head list_root;
+
+	unsigned int		rt_nr_running;
+	unsigned int		rr_nr_running;
+#if defined CONFIG_SMP || defined CONFIG_RT_GROUP_SCHED
+	struct {
+		int		curr; /* highest queued rt task prio */
+#ifdef CONFIG_SMP
+		int		next; /* next highest */
+#endif
+	} highest_prio;
+#endif
+#ifdef CONFIG_SMP
+	unsigned int		rt_nr_migratory;
+	unsigned int		rt_nr_total;
+	int			overloaded;
+	struct plist_head	pushable_tasks;
+
+#endif /* CONFIG_SMP */
+	int			rt_queued;
+
+	int			rt_throttled;
+	u64			rt_time;
+	u64			rt_runtime;
+	/* Nests inside the rq lock: */
+	raw_spinlock_t		rt_runtime_lock;
+
+#ifdef CONFIG_RT_GROUP_SCHED
+	unsigned int		rt_nr_boosted;
+
+	struct rq		*rq;
+	struct task_group	*tg;
+#endif
+};
+
+
 #ifdef CONFIG_FAIR_GROUP_SCHED
 /* An entity is a task if it doesn't "own" a runqueue */
 #define entity_is_task(se)	(!se->my_q)

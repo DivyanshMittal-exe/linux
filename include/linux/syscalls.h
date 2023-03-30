@@ -113,10 +113,15 @@ struct pid_ctxt_switch {
 #ifndef MY_SYSCALL
 #define MY_SYSCALL
 
-asmlinkage long sys_register(pid_t pid);
-asmlinkage long sys_fetch(struct pid_ctxt_switch *stats);
-asmlinkage long sys_deregister(pid_t pid);
+//asmlinkage long sys_register(pid_t pid);
+//asmlinkage long sys_fetch(struct pid_ctxt_switch *stats);
+//asmlinkage long sys_deregister(pid_t pid);
 
+asmlinkage long sys_register_rm( pid_t pid,int period,int deadline,int exec_time);
+asmlinkage long sys_register_dm( pid_t pid,int period,int deadline,int exec_time);
+asmlinkage long sys_yield(pid_t pid);
+asmlinkage long sys_remove(pid_t pid);
+asmlinkage long sys_list();
 #endif
 
 

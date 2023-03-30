@@ -372,9 +372,11 @@
 448	common	process_mrelease	sys_process_mrelease
 449	common	futex_waitv		sys_futex_waitv
 450	common	set_mempolicy_home_node	sys_set_mempolicy_home_node
-451	common	cst_register    sys_register
-452	common	cst_fetch		sys_fetch
-453	common	cst_deregister		sys_deregister
+451	common	sced_register_dm    	sys_register_dm
+452	common	sced_register_rm	sys_register_rm
+453	common	sced_yield		sys_yield
+454	common	sced_remove		sys_remove
+455	common	sced_list		sys_list
 #
 # Due to a historical design error, certain syscalls are numbered differently
 # in x32 as compared to native x86_64.  These syscalls have numbers 512-547.
