@@ -117,11 +117,18 @@ struct pid_ctxt_switch {
 //asmlinkage long sys_fetch(struct pid_ctxt_switch *stats);
 //asmlinkage long sys_deregister(pid_t pid);
 
-asmlinkage long sys_register_rm( pid_t pid,int period,int deadline,int exec_time);
-asmlinkage long sys_register_dm( pid_t pid,int period,int deadline,int exec_time);
+asmlinkage long sys_register_rm( pid_t pid,u64 period,u64 deadline,u64 exec_time);
+asmlinkage long sys_register_dm( pid_t pid,u64 period,u64 deadline,u64 exec_time);
 asmlinkage long sys_yield(pid_t pid);
 asmlinkage long sys_remove(pid_t pid);
 asmlinkage long sys_list();
+
+asmlinkage long sys_resource_map(pid_t pid,unsigned int RID);
+asmlinkage long sys_start_pcp(unsigned int num_process);
+asmlinkage long sys_pcp_lock(pid_t pid,unsigned int RID);
+asmlinkage long sys_pcp_unlock(pid_t pid,unsigned int RID);
+
+
 #endif
 
 
