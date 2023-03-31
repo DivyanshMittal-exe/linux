@@ -274,12 +274,14 @@ static void yield_task_rm(struct rq *rq)
 
 		update_rq_clock(rq);
 		update_curr_rm(rq);
-
 		rq_clock_skip_update(rq);
+		struct sched_rm_entity *rm_se = &curr->rm;
+		rm_se->runtime = 0;
 }
 
 
-static void task_tick_rk(struct rq *rq, struct task_struct *p, int queued)
+
+static void task_tick_rm(struct rq *rq, struct task_struct *p, int queued)
 {
 		update_curr_rm(rq);
 
@@ -319,7 +321,7 @@ DEFINE_SCHED_CLASS(rm) = {
 //		.find_lock_rq		= find_lock_later_rq,
 //	#endif
 //
-//		.task_tick		= task_tick_dl,
+		.task_tick		= task_tick_rm,
 //		.task_fork              = task_fork_dl,
 //
 //		.prio_changed           = prio_changed_dl,
