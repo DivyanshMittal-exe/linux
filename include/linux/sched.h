@@ -674,42 +674,6 @@ struct sched_dl_entity {
 
 
 
-struct sched_rm_entity{
-	//	struct rb_node			rb_nd;
-
-	struct list_head list_element;
-
-
-	//	struct task_struct 		*p;
-	/*
-	 * Original scheduling parameters. Copied here from sched_attr
-	 * during sched_setattr(), they will remain the same until
-	 * the next sched_setattr().
-	 */
-	u64				dl_runtime;	/* Maximum runtime for each instance	*/
-	u64				dl_deadline;	/* Relative deadline of each instance	*/
-	u64				dl_period;	/* Separation of two instances (period) */
-	u64				dl_bw;		/* dl_runtime / dl_period		*/
-	u64				dl_density;	/* dl_runtime / dl_deadline		*/
-
-	/*
-	 * Actual scheduling parameters. Initialized with the values above,
-	 * they are continuously updated during task execution. Note that
-	 * the remaining runtime could be < 0 in case we are in overrun.
-	 */
-	s64				runtime;	/* Remaining runtime for this instance	*/
-	u64				deadline;	/* Absolute deadline for this instance	*/
-	unsigned int			flags;		/* Specifying the scheduler behaviour	*/
-
-
-};
-
-
-
-
-
-
-
 
 
 
@@ -830,7 +794,6 @@ struct task_struct {
 	struct sched_entity		se;
 	struct sched_rt_entity		rt;
 	struct sched_dl_entity		dl;
-	struct sched_rm_entity 		rm;
 	const struct sched_class	*sched_class;
 
 #ifdef CONFIG_SCHED_CORE
