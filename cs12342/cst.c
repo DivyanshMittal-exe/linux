@@ -63,6 +63,9 @@ struct rm_entity{
 	u64 				dl_density;	/* dl_runtime / dl_deadline		*/
 
 
+	u64 				dl_priority;
+
+
 	s64				runtime;	/* Remaining runtime for this instance	*/
 	u64 				deadline;	/* Absolute deadline for this instance	*/
 	int				flags;		/* Specifying the scheduler behaviour	*/
@@ -71,12 +74,13 @@ struct rm_entity{
 };
 
 
-static  bool __rm_less(struct rb_node *a, const struct rb_node *b)
+static  bool __rm_less_rms(struct rb_node *a, const struct rb_node *b)
 {
 	struct rm_entity *f =   rb_entry((a), struct rm_entity, rb_nd);
 	struct rm_entity *s =   rb_entry((b), struct rm_entity, rb_nd);
-	return f->deadline < s->deadline;
+	return f->dl_deadline < s->dl_deadline;
 }
+
 
 
 
@@ -130,10 +134,10 @@ void __schedule_rm(void){
 	state_of_curr_task = task_state_to_char(curr_task);
 
 
-	printk(KERN_INFO "Currently running %d, with deadline %llu, leftmost is %d, with deadline %llu\n", curr_task->pid, last_run_by_me->deadline, leftmost_rm_entity->p->pid, leftmost_rm_entity->deadline);
+	printk(KERN_INFO "Currently running %d, with deadline %llu, leftmost is %d, with deadline %llu\n", curr_task->pid, last_run_by_me->dl_deadline, leftmost_rm_entity->p->pid, leftmost_rm_entity->dl_deadline);
 
 
-	if(state_of_curr_task != 'R' || curr_entity->flags != 1 || curr_entity->deadline > leftmost_rm_entity->deadline){
+	if(state_of_curr_task != 'R' || curr_entity->flags != 1 || curr_entity->dl_deadline > leftmost_rm_entity->dl_deadline){
 
 
 		if (send_sig(SIGSTOP, curr_task, 0) < 0) {
@@ -153,7 +157,7 @@ void __schedule_rm(void){
 		last_run_by_me = leftmost_rm_entity;
 	}
 
-	printk(KERN_INFO "So I schedule %d, with deadline %lld\n", last_run_by_me->p->pid, last_run_by_me->deadline);
+	printk(KERN_INFO "So I schedule %d, with deadline %lld\n", last_run_by_me->p->pid, last_run_by_me->dl_deadline);
 
 
 
@@ -188,7 +192,7 @@ void callback_deadline_setter(struct timer_list *t_l)
 
 	__schedule_rm();
 
-	mod_timer(&(entity->callback_timer), entity->deadline + msecs_to_jiffies(entity->dl_deadline));
+	mod_timer(&(entity->callback_timer), entity->deadline);
 
 
 	//spin_unlock(&sched_lock);
@@ -215,7 +219,7 @@ int rm_dm_implementation( pid_t pid,unsigned int  period,unsigned int  deadline,
 	rm_of_task->dl_deadline = deadline;
 	rm_of_task->dl_period = period;
 
-	rm_of_task->flags = 1;
+	rm_of_task->flags = -1;
 
 
 	rm_of_task->runtime = exec_time;
@@ -224,7 +228,7 @@ int rm_dm_implementation( pid_t pid,unsigned int  period,unsigned int  deadline,
 
 	printk(KERN_INFO "The deadline of task %d is %llu \n",pid, rm_of_task->deadline );
 
-	rb_add_cached(&(rm_of_task->rb_nd), &runnables , __rm_less);
+//	rb_add_cached(&(rm_of_task->rb_nd), &runnables , __rm_less);
 
 	list_add(&(rm_of_task->list_nd), &all_processes);
 
@@ -243,10 +247,10 @@ int rm_dm_implementation( pid_t pid,unsigned int  period,unsigned int  deadline,
 	attr->sched_priority = prio_of_process;
 
 
-		if (sched_setattr(task, attr) == -1) {
-			printk(KERN_ALERT "sched_setattr Failed for %d\n", pid);
+	if (sched_setattr(task, attr) == -1) {
+		printk(KERN_ALERT "sched_setattr Failed for %d\n", pid);
 //			return -1;
-		}
+	}
 
 	cpumask_t cpu_mask;
 	cpumask_clear(&cpu_mask);
@@ -258,10 +262,10 @@ int rm_dm_implementation( pid_t pid,unsigned int  period,unsigned int  deadline,
 //		return -1;
 	}
 
-	if (send_sig(SIGSTOP, task, 0) < 0) {
-		printk(KERN_ALERT "send_sig SIGSTOP failed for task %d\n", pid);
-//		return -1;
-	}
+//	if (send_sig(SIGSTOP, task, 0) < 0) {
+//		printk(KERN_ALERT "send_sig SIGSTOP failed for task %d\n", pid);
+////		return -1;
+//	}
 
 	printk(KERN_INFO "Added the new process %d\n", task->pid);
 
@@ -275,7 +279,7 @@ int rm_dm_implementation( pid_t pid,unsigned int  period,unsigned int  deadline,
 	}
 
 
-	(rm_of_task->callback_timer).expires = jiffies + msecs_to_jiffies(deadline);
+	(rm_of_task->callback_timer).expires = rm_of_task->deadline;
 	(rm_of_task->callback_timer).function = callback_deadline_setter;
 
 	add_timer(&(rm_of_task->callback_timer));
@@ -292,11 +296,109 @@ int rm_dm_implementation( pid_t pid,unsigned int  period,unsigned int  deadline,
 }
 
 
+bool check_for_rm_dm(pid_t pid, unsigned int deadline, unsigned int period, unsigned int exec_time){
+
+	struct rm_entity *entity;
+	struct task_struct *task;
+
+
+	struct rm_entity* entity_for_interference;
+
+	//spin_lock(&sched_lock);
+
+	u64 t = 0;
+
+	printk(KERN_INFO "Checking validity %d\n", pid);
+
+	list_for_each_entry(entity, &all_processes, list_nd) {
+		t += entity->dl_runtime;
+		int cont = 1;
+
+		while(cont){
+			u64 interference = 0;
+			list_for_each_entry(entity_for_interference, &all_processes, list_nd) {
+				if (entity_for_interference->p->pid ==
+				    entity->p->pid) {
+					break;
+				}
+
+				u64 rem;
+
+				interference +=
+					div64_u64_rem(t,
+						      entity_for_interference
+							      ->dl_period,
+						      &rem) *
+					(entity_for_interference->dl_runtime);
+				if (rem) {
+					interference += (entity_for_interference
+								 ->dl_runtime);
+				}
+			}
+
+			if (interference + exec_time < t){
+				cont = 0;
+			}else{
+				t = interference + exec_time;
+			}
+
+
+			if(t > deadline){
+				return false;
+			}
+			
+		}
+
+	}
+
+	t += exec_time;
+
+	int cont = 1;
+
+	while(cont){
+		u64 interference = 0;
+		list_for_each_entry(entity_for_interference, &all_processes, list_nd) {
+			u64 rem;
+
+			interference +=
+				div64_u64_rem(
+					t, entity_for_interference->dl_period,
+					&rem) *
+				(entity_for_interference->dl_runtime);
+			if (rem) {
+				interference +=
+					(entity_for_interference->dl_runtime);
+			}
+		}
+
+		if (interference + exec_time < t){
+			cont = 0;
+		}else{
+			t = interference + exec_time;
+		}
+
+
+		if(t > entity-> deadline){
+			return false;
+		}
+
+	}
+
+	return true;
+}
+
+
+
 SYSCALL_DEFINE4(register_rm, pid_t, pid,unsigned int ,period,unsigned int ,deadline,unsigned int ,exec_time)
 {
 
+//	if(check_for_rm_dm(pid,deadline, period, exec_time)){
+		return rm_dm_implementation(pid,period,deadline,exec_time);
+//
+//	}else{
+//		return  -1;
+//	}
 
-	return rm_dm_implementation(pid,period,deadline,exec_time);
 
 }
 
@@ -306,7 +408,11 @@ SYSCALL_DEFINE4(register_dm, pid_t, pid,unsigned int ,period,unsigned int ,deadl
 	if (pid < 1)
 		return -EINVAL;
 
-	return rm_dm_implementation(pid,period,deadline,exec_time);
+//	if(check_for_rm_dm(pid,deadline, period, exec_time)){
+		return rm_dm_implementation(pid,period,deadline,exec_time);
+//	}else{
+//		return -1;
+//	}
 
 
 }
@@ -329,9 +435,12 @@ SYSCALL_DEFINE1(yield, pid_t, pid)
 		task = entity->p;
 		if (task && task->pid == pid) {
 			printk(KERN_INFO "Found rm_entity with pid %d\n", pid);
-			entity->flags = 0;
 
-			rb_erase_cached(&(entity->rb_nd),&(runnables));
+			if(entity->flags != -1){
+				entity->flags = 0;
+				rb_erase_cached(&(entity->rb_nd),&(runnables));
+			}
+
 
 			if (send_sig(SIGSTOP, task, 0) < 0) {
 				printk(KERN_ALERT "send_sig SIGSTOP failed for task %d\n", pid);
@@ -429,11 +538,130 @@ SYSCALL_DEFINE0(list){
 
 
 
+// Define a struct for each resource
+struct resource_pcp {
+	unsigned int rid;
 
-SYSCALL_DEFINE2(resource_map, pid_t, pid, unsigned int, RID){
-	return  0;
+	u64 resource_ceil;
+
+	struct list_head glob_list; // For list of all resources
+	struct list_head my_list; // All the processes requesting this resource
+};
+
+// Define a struct for each process
+struct process_pcp {
+	pid_t pid;
+
+	u64 process_prio;
+
+	struct list_head glob_list; // For list of all processes
+	struct list_head my_list; // All the resources requested by this process
+};
+
+LIST_HEAD(resource_list_pcp);
+
+LIST_HEAD(process_list_pcp);
+
+
+
+void __sched_pcp(void){
+	
+}
+
+
+u64 global_ceil = 10000000;
+
+
+SYSCALL_DEFINE2(resource_map, pid_t, pid, unsigned int, rid){
+
+
+	struct process_pcp *process;
+	struct resource_pcp *resource;
+	int process_found = 0, resource_found = 0;
+
+	// Check if the process already exists in the process list
+	list_for_each_entry(process, &process_list_pcp, glob_list) {
+		if (process->pid == pid) {
+			process_found = 1;
+			break;
+		}
+	}
+
+	// If the process is not found, create a new process struct and add it to the list
+	if (!process_found) {
+		process = kmalloc(sizeof(struct process_pcp), GFP_KERNEL);
+		if (!process) {
+			printk(KERN_ERR "Error: Failed to allocate memory for process struct\n");
+			return -ENOMEM;
+		}
+		process->pid = pid;
+		INIT_LIST_HEAD(&process->my_list);
+		list_add(&process->glob_list, &process_list_pcp);
+	}
+
+	// Check if the resource already exists in the resource list
+	list_for_each_entry(resource, &resource_list_pcp, glob_list) {
+		if (resource->rid == rid) {
+			resource_found = 1;
+			break;
+		}
+	}
+
+	// If the resource is not found, create a new resource struct and add it to the list
+	if (!resource_found) {
+		resource = kmalloc(sizeof(struct resource_pcp), GFP_KERNEL);
+		if (!resource) {
+			printk(KERN_ERR "Error: Failed to allocate memory for resource struct\n");
+			return -ENOMEM;
+		}
+		resource->rid = rid;
+		resource->resource_ceil = 100000000;
+		INIT_LIST_HEAD(&resource->my_list);
+		list_add(&resource->glob_list, &resource_list_pcp);
+	}
+
+
+	struct process_pcp *process_to_add_to_res;
+	struct resource_pcp *resource_to_add_to_process;
+
+
+	process_to_add_to_res = kmalloc(sizeof(struct process_pcp), GFP_KERNEL);
+	resource_to_add_to_process = kmalloc(sizeof(struct resource_pcp), GFP_KERNEL);
+
+	process_to_add_to_res->pid = pid;
+
+
+	list_for_each_entry(entity, &all_processes, list_nd) {
+		if(entity->p->pid == pid){
+			process_to_add_to_res->process_prio = entity->dl_deadline;
+			break;
+		}
+
+	}
+
+	resource_to_add_to_process->rid = rid;
+
+	// Add the process to the resource's list of processes
+	list_add(&process_to_add_to_res->my_list, &resource->my_list);
+
+	// Add the resource to the process's list of resources
+	list_add(&resource_to_add_to_process->my_list, &process->my_list);
+
+	return 0;
+
 }
 SYSCALL_DEFINE1(start_pcp,unsigned int, RID){
+
+	struct process_pcp *process;
+	struct resource_pcp *resource;
+
+	list_for_each_entry(resource, &resource_list_pcp, glob_list) {
+		list_for_each_entry(process, &(resource->my_list), my_list) {
+			resource->resource_ceil = min(resource->resource_ceil , process->process_prio);
+			global_ceil = min(global_ceil, resource->resource_ceil);
+		}
+	}
+
 	return  0;
 }
 SYSCALL_DEFINE2(pcp_lock, pid_t, pid, unsigned int, RID){
