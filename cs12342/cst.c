@@ -79,7 +79,7 @@ struct rm_entity{
 };
 
 
-static  bool __rm_less_rms(struct rb_node *a, const struct rb_node *b)
+static  bool __rm_less(struct rb_node *a, const struct rb_node *b)
 {
 	struct rm_entity *f =   rb_entry((a), struct rm_entity, rb_nd);
 	struct rm_entity *s =   rb_entry((b), struct rm_entity, rb_nd);
@@ -191,7 +191,7 @@ void callback_deadline_setter(struct timer_list *t_l)
 		entity->flags = 1;
 	}
 
-	entity->deadline += entity->dl_deadline;
+	entity->deadline += msecs_to_jiffies(entity->dl_deadline);
 
 	rb_add_cached(&(entity->rb_nd), &runnables , __rm_less);
 
@@ -229,7 +229,7 @@ int rm_dm_implementation( pid_t pid,unsigned int  period,unsigned int  deadline,
 
 
 	rm_of_task->runtime = exec_time;
-	rm_of_task->deadline = get_jiffies_64() + deadline;
+	rm_of_task->deadline = get_jiffies_64() + msecs_to_jiffies(deadline);
 
 
 	printk(KERN_INFO "The deadline of task %d is %llu \n",pid, rm_of_task->deadline );
@@ -305,14 +305,19 @@ int rm_dm_implementation( pid_t pid,unsigned int  period,unsigned int  deadline,
 bool check_for_rm(pid_t pid, unsigned int deadline, unsigned int period, unsigned int exec_time){
 	struct rm_entity *entity;
 
-	mult = 1000;
+	int mult = 1000;
 
-	u64 util_times_mult = 0;
+	int util_times_mult = 0;
+
+	u64 rem;
 
 	list_for_each_entry(entity, &all_processes, list_nd) {
-		u64 rem;
-		util_times_mult +=  div64_u64_rem(entity->dl_runtime * mult,entity->dl_period,&rem)
+		util_times_mult +=  div64_u64_rem(entity->dl_runtime * mult,entity->dl_period,&rem);
 	}
+
+	util_times_mult +=  div64_u64_rem(exec_time * mult,period,&rem);
+
+	printk(KERN_INFO "Utilisation is %d / %d\n", util_times_mult,mult);
 
 	if(util_times_mult*100 < 69*mult){
 		return true;
@@ -338,38 +343,37 @@ bool check_for_dm(pid_t pid, unsigned int deadline, unsigned int period, unsigne
 
 	list_for_each_entry(entity, &all_processes, list_nd) {
 		t += entity->dl_runtime;
+
+		printk(KERN_INFO "t is %d\n", t);
+
 		int cont = 1;
 
 		while(cont){
 			u64 interference = 0;
 			list_for_each_entry(entity_for_interference, &all_processes, list_nd) {
-				if (entity_for_interference->p->pid ==
-				    entity->p->pid) {
+				if (entity_for_interference->p->pid == entity->p->pid) {
 					break;
 				}
 
 				u64 rem;
 
-				interference +=
-					div64_u64_rem(t,
-						      entity_for_interference
-							      ->dl_period,
-						      &rem) *
-					(entity_for_interference->dl_runtime);
+				interference += div64_u64_rem(t, entity_for_interference->dl_period, &rem) *(entity_for_interference->dl_runtime);
 				if (rem) {
-					interference += (entity_for_interference
-								 ->dl_runtime);
+					interference += (entity_for_interference->dl_runtime);
 				}
 			}
 
-			if (interference + exec_time < t){
+			printk(KERN_INFO "interference is %d\n", interference);
+
+
+			if (interference + entity->dl_runtime <= t){
 				cont = 0;
 			}else{
-				t = interference + exec_time;
+				t = interference + entity->dl_runtime;
 			}
 
 
-			if(t > deadline){
+			if(t > entity->dl_deadline){
 				return false;
 			}
 			
@@ -381,35 +385,38 @@ bool check_for_dm(pid_t pid, unsigned int deadline, unsigned int period, unsigne
 
 	int cont = 1;
 
+	printk(KERN_INFO "t is %d\n", t);
+
 	while(cont){
 		u64 interference = 0;
 		list_for_each_entry(entity_for_interference, &all_processes, list_nd) {
+
 			u64 rem;
 
-			interference +=
-				div64_u64_rem(
-					t, entity_for_interference->dl_period,
-					&rem) *
-				(entity_for_interference->dl_runtime);
+			interference += div64_u64_rem(t, entity_for_interference->dl_period, &rem) *(entity_for_interference->dl_runtime);
 			if (rem) {
-				interference +=
-					(entity_for_interference->dl_runtime);
+				interference += (entity_for_interference->dl_runtime);
 			}
 		}
 
-		if (interference + exec_time < t){
+
+		printk(KERN_INFO "interference is %d\n", interference);
+
+		if (interference + exec_time <= t){
 			cont = 0;
 		}else{
 			t = interference + exec_time;
 		}
 
 
-		if(t > entity-> deadline){
+
+		if(t > deadline){
 			return false;
 		}
 
 	}
 
+	printk(KERN_INFO "Check is true\n");
 	return true;
 }
 
@@ -418,12 +425,12 @@ bool check_for_dm(pid_t pid, unsigned int deadline, unsigned int period, unsigne
 SYSCALL_DEFINE4(register_rm, pid_t, pid,unsigned int ,period,unsigned int ,deadline,unsigned int ,exec_time)
 {
 
-//	if(check_for_rm_dm(pid,deadline, period, exec_time)){
+	if(check_for_rm(pid,deadline, period, exec_time)){
 		return rm_dm_implementation(pid,period,deadline,exec_time);
 //
-//	}else{
-//		return  -1;
-//	}
+	}else{
+		return  -1;
+	}
 
 
 }
@@ -434,11 +441,11 @@ SYSCALL_DEFINE4(register_dm, pid_t, pid,unsigned int ,period,unsigned int ,deadl
 	if (pid < 1)
 		return -EINVAL;
 
-//	if(check_for_rm_dm(pid,deadline, period, exec_time)){
+	if(check_for_dm(pid,deadline, period, exec_time)){
 		return rm_dm_implementation(pid,period,deadline,exec_time);
-//	}else{
-//		return -1;
-//	}
+	}else{
+		return -1;
+	}
 
 
 }
@@ -621,6 +628,7 @@ SYSCALL_DEFINE2(resource_map, pid_t, pid, unsigned int, rid){
 	}
 
 
+	int resource_found = 0;
 
 	list_for_each_entry(resource, &resource_list_pcp, glob_list) {
 		if (resource->rid == rid) {
@@ -639,13 +647,14 @@ SYSCALL_DEFINE2(resource_map, pid_t, pid, unsigned int, rid){
 		resource->resource_ceil = MAX_GLOB_CEIL;
 		resource->acquires_pid = -1;
 //		resource->acquired = 0;
-		INIT_LIST_HEAD(&process->wait_list);
+		INIT_LIST_HEAD(&resource->wait_list);
 		list_add(&resource->glob_list, &resource_list_pcp);
 	}
 
-	resource->resource_ceil = min(resource->resource_ceil,proc_prio)
+	resource->resource_ceil = min(resource->resource_ceil,proc_prio);
 
-	resource->resource_prio = resource->resource_ceil;
+	return 0;
+//	resource->resource_prio = resource->resource_ceil;
 
 
 
@@ -724,6 +733,8 @@ SYSCALL_DEFINE2(resource_map, pid_t, pid, unsigned int, rid){
 //	return 0;
 
 }
+
+
 SYSCALL_DEFINE1(start_pcp,unsigned int, RID){
 
 //	struct process_pcp *process;
@@ -777,7 +788,7 @@ int pcp_lock_impl( pid_t pid, unsigned int RID)
 			do_i_have_a_system_ceil = 1;
 		}
 
-		if (resource->rid == rid) {
+		if (resource->rid == RID) {
 			resource_requested = resource;
 		}
 	}
@@ -785,12 +796,12 @@ int pcp_lock_impl( pid_t pid, unsigned int RID)
 
 	if(resource_requested->acquires_pid == -1){
 		if(do_i_have_a_system_ceil){
-			resource_requested->acquires_pid == pid;
-			return;
+			resource_requested->acquires_pid = pid;
+			return 0;
 		}else if(this_entity->dl_priority < global_ceil){
-			resource_requested->acquires_pid == pid;
+			resource_requested->acquires_pid = pid;
 			global_ceil = this_entity->dl_priority;
-			return;
+			return 0;
 		}else{
 			rb_erase_cached(&(this_entity->rb_nd),&(runnables));
 			list_add(&(this_entity->wait_list), &(resource_requested->wait_list));
@@ -872,7 +883,7 @@ SYSCALL_DEFINE2(pcp_unlock, pid_t, pid, unsigned int, RID){
 
 	list_for_each_entry(resource, &resource_list_pcp, glob_list) {
 
-		if(resource->rid == rid){
+		if(resource->rid == RID){
 			resource->acquires_pid = -1;
 
 		}
@@ -922,7 +933,7 @@ SYSCALL_DEFINE2(pcp_unlock, pid_t, pid, unsigned int, RID){
 
 			struct resource_pcp *resource_to_check_ceil;
 
-			min_entity_waiting_holding_prio = MAX_GLOBAL_CEIL;
+			u64 min_entity_waiting_holding_prio = min_entity_waiting->dl_priority;
 
 			list_for_each_entry(resource_to_check_ceil, &resource_list_pcp, glob_list) {
 				if(resource_to_check_ceil->acquires_pid == min_entity_waiting->p->pid){
@@ -932,20 +943,20 @@ SYSCALL_DEFINE2(pcp_unlock, pid_t, pid, unsigned int, RID){
 
 			if(min_entity_waiting_holding_prio == global_ceil ){
 
-				resource->acquires_pid == min_entity_waiting_prio->p->pid;
+				resource->acquires_pid = min_entity_waiting->p->pid;
 
-				list_del(&(min_entity_waiting_prio->wait_list));
+				list_del(&(min_entity_waiting->wait_list));
 
-				rb_add_cached(&(min_entity_waiting_prio->rb_nd), &runnables , __rm_less);
+				rb_add_cached(&(min_entity_waiting->rb_nd), &runnables , __rm_less);
 
 
 			}else if(min_entity_waiting->dl_priority < global_ceil){
-				resource->acquires_pid == pid;
+				resource->acquires_pid = pid;
 				global_ceil = min_entity_waiting->dl_priority;
 
-				list_del(&(min_entity_waiting_prio->wait_list));
+				list_del(&(min_entity_waiting->wait_list));
 
-				rb_add_cached(&(min_entity_waiting_prio->rb_nd), &runnables , __rm_less);
+				rb_add_cached(&(min_entity_waiting->rb_nd), &runnables , __rm_less);
 			}
 
 
