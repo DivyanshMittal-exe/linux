@@ -23,9 +23,11 @@ int main(int argc, char *argv[]) {
     exec_time = atoi(argv[2]);
     deadline = atoi(argv[3]);
 
+    cout << "Period is " << period << " Exec time is " << exec_time << " Deadline is " << deadline << endl;
+
     pid = getpid();
 
-//    syscall(437, pid, period, deadline, exec_time);  // SYS_register_dm = 437
+    syscall(452, pid, period, deadline, exec_time);  // SYS_register_dm = 452
 
     int job = 1;
     do {
@@ -33,21 +35,30 @@ int main(int argc, char *argv[]) {
         wakeup_time = chrono::duration_cast<chrono::milliseconds>(exec_start - init).count();
         cout << "Wakeup: " << wakeup_time << endl;
 
+
         perform_job(argv[4]);
 
         finish = chrono::steady_clock::now();
         finish_time = chrono::duration_cast<chrono::milliseconds>(finish - exec_start).count();
         cout << "Time to finish: " << finish_time << endl;
-        cout << "Ran for " << finish_time - wakeup_time << "ms"<< endl;
 
-//        syscall(444, pid);  //
+
+        // cout << "Ran for " << finish_time - wakeup_time << "ms"<< endl;
+
+        syscall(453, pid);  //
 
         job++;
 
         // Scheduling should be performed after the first invocation of sys_yield()
-    } while(job < 1);
+    } while(job < 11);
 
-//    syscall(439, pid);  //
+
+    cout << "My name is " << argv[4] << " And I am nearly done " << endl;
+
+    syscall(454, pid);  //
+
+    cout << "My name is " << argv[4] << " And I just exited    " << endl;
+
 
     return 0;
 
