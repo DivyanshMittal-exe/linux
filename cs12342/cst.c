@@ -34,7 +34,7 @@
 
 // static LIST_HEAD(cst_list_head);
 
-struct rb_root_cached runnables = RB_ROOT_CACHED;
+//struct rb_root_cached runnables = RB_ROOT_CACHED;
 
 static LIST_HEAD(all_processes);
 
@@ -46,12 +46,16 @@ struct rm_entity *last_run_by_me = NULL;
 #define  cpu_to_run_on  0;
 #define prio_of_process  32;
 
+#define MAX_GLOB_CEIL 1000000;
+
+u64 global_ceil = MAX_GLOB_CEIL;
+
 
 int pcp_begin = 0;
 
 struct rm_entity{
 
-	struct rb_node rb_nd;
+//	struct rb_node rb_nd;
 
 	struct list_head list_nd;
 
@@ -79,12 +83,12 @@ struct rm_entity{
 };
 
 
-static  bool __rm_less(struct rb_node *a, const struct rb_node *b)
-{
-	struct rm_entity *f =   rb_entry((a), struct rm_entity, rb_nd);
-	struct rm_entity *s =   rb_entry((b), struct rm_entity, rb_nd);
-	return f->dl_priority < s->dl_priority;
-}
+//static  bool __rm_less(struct rb_node *a, const struct rb_node *b)
+//{
+//	struct rm_entity *f =   rb_entry((a), struct rm_entity, rb_nd);
+//	struct rm_entity *s =   rb_entry((b), struct rm_entity, rb_nd);
+//	return f->dl_priority < s->dl_priority;
+//}
 
 
 
@@ -93,98 +97,154 @@ static  bool __rm_less(struct rb_node *a, const struct rb_node *b)
 
 void __schedule_rm(void){
 
-	struct rm_entity* curr_entity = last_run_by_me;
+//	struct rm_entity* curr_entity = last_run_by_me;
 
 	struct rm_entity* pos;
 	struct rm_entity* n;
 
 
-	rbtree_postorder_for_each_entry_safe(pos, n, (&(runnables.rb_root)), rb_nd){
-		printk(KERN_INFO "RB Tree info %d Prio %d %c \n", pos->p->pid, pos->dl_priority, task_state_to_char(pos->p));
-	}
+//	rbtree_postorder_for_each_entry_safe(pos, n, (&(runnables.rb_root)), rb_nd){
+//		printk(KERN_INFO "RB Tree info %d Prio %d %c \n", pos->p->pid, pos->dl_priority, task_state_to_char(pos->p));
+//	}
 
 	printk(KERN_INFO "Inside Sched");
 
-	struct rm_entity* entity;
+
+	struct rm_entity *entity ;
+
 	list_for_each_entry(entity, &all_processes, list_nd) {
-		printk(KERN_INFO "List info %d Prio %d %c \n", entity->p->pid, entity->dl_priority, task_state_to_char(entity->p));
-	}
-
-	if(RB_EMPTY_ROOT(&(runnables.rb_root))){
-		return ;
-	}
-
-	if(!curr_entity){
-		struct rb_node* leftmost;
-		struct rm_entity* leftmost_rm_entity;
-		leftmost = rb_first_cached(&runnables);
-		struct task_struct* leftmost_task_struct;
-		leftmost_rm_entity= container_of(leftmost, struct rm_entity, rb_nd);
-		leftmost_task_struct = leftmost_rm_entity->p;
-
-
-
-		char state_of_l_task = task_state_to_char(leftmost_task_struct);
-
-		printk(KERN_INFO "First Process added %d State %c\n", leftmost_task_struct->pid,state_of_l_task);
-
-		if (send_sig(SIGCONT, leftmost_task_struct, 0) < 0) {
-			printk(KERN_INFO "send_sig SIGCONT failed for task %d  First Process\n", leftmost_task_struct->pid);
-			return;
-		}
-
-		last_run_by_me = leftmost_rm_entity;
-//		leftmost_rm_entity->flags = 1;
-		return ;
+		printk(KERN_INFO "List info %d Prio %d %c Flags %d \n", entity->p->pid,
+		       entity->dl_priority, task_state_to_char(entity->p) , entity->flags);
 	}
 
 
-	struct task_struct *curr_task = last_run_by_me->p;
+	list_for_each_entry(entity, &all_processes, list_nd) {
 
-
-
-
-	struct rb_node* leftmost;
-	struct rm_entity* leftmost_rm_entity;
-	struct task_struct* leftmost_task_struct;
-	char state_of_curr_task;
-
-
-	leftmost = rb_first_cached(&runnables);
-	leftmost_rm_entity= container_of(leftmost, struct rm_entity, rb_nd);
-	leftmost_task_struct = leftmost_rm_entity->p;
-
-	state_of_curr_task = task_state_to_char(curr_task);
-
-
-	printk(KERN_INFO "Currently running %d, with deadline %llu, leftmost is %d, with deadline %llu\n", curr_task->pid, last_run_by_me->dl_deadline, leftmost_rm_entity->p->pid, leftmost_rm_entity->dl_deadline);
-
-
-	if(state_of_curr_task != 'R' || curr_entity->flags != 1 || curr_entity->dl_priority > leftmost_rm_entity->dl_priority){
-
-
-		if(state_of_curr_task == 'R'){
-			if (send_sig(SIGSTOP, curr_task, 0) < 0) {
+		if(entity -> flags >= 0 && task_state_to_char(entity->p) == 'R'){
+			if (send_sig(SIGSTOP, entity->p, 0) < 0) {
 
 	//			curr_entity->flags = 0;
-
-				printk(KERN_INFO "send_sig SIGSTOP failed for task %d\n", curr_task->pid);
+				printk(KERN_INFO "send_sig SIGSTOP failed for task %d\n", entity->p->pid);
 				return;
 			}
+
 		}
 
-		if (send_sig(SIGCONT, leftmost_task_struct, 0) < 0) {
-//			leftmost_rm_entity->flags = 1;
-			printk(KERN_INFO "send_sig SIGCONT failed for task %d\n", leftmost_task_struct->pid);
-			return;
-		}
 
-		last_run_by_me = leftmost_rm_entity;
 	}
 
-	printk(KERN_INFO "So I schedule %d, with deadline %lld\n", last_run_by_me->p->pid, last_run_by_me->dl_deadline);
+	printk(KERN_INFO "Stopped Processes");
 
 
+	u64 min_prio = MAX_GLOB_CEIL;
+	struct rm_entity *min_ent = NULL;
+
+	list_for_each_entry(entity, &all_processes, list_nd) {
+		if(entity->flags == 1){
+			min_prio = min(min_prio, entity->dl_priority );
+			if(entity->dl_priority == min_prio){
+				min_ent = entity;
+			}
+		}
+	}
+
+	if(min_ent){
+		if (send_sig(SIGCONT, min_ent->p, 0) < 0) {
+			//			leftmost_rm_entity->flags = 1;
+			printk(KERN_INFO "send_sig SIGCONT failed for task %d\n", min_ent->p->pid);
+			return;
+		}
+		
+	}
+
+	printk(KERN_INFO "Done With Scheduling");
+
+
+	return;
+
+		//
+
+
+		//	struct rm_entity* entity;
+//	list_for_each_entry(entity, &all_processes, list_nd) {
+//		printk(KERN_INFO "List info %d Prio %d %c \n", entity->p->pid, entity->dl_priority, task_state_to_char(entity->p));
+//	}
+
+//	if(RB_EMPTY_ROOT(&(runnables.rb_root))){
+//		return ;
+//	}
+
+//	if(!curr_entity){
+//		struct rb_node* leftmost;
+//		struct rm_entity* leftmost_rm_entity;
+//		leftmost = rb_first_cached(&runnables);
+//		struct task_struct* leftmost_task_struct;
+//		leftmost_rm_entity= container_of(leftmost, struct rm_entity, rb_nd);
+//		leftmost_task_struct = leftmost_rm_entity->p;
+//
+//
+//
+//		char state_of_l_task = task_state_to_char(leftmost_task_struct);
+//
+//		printk(KERN_INFO "First Process added %d State %c\n", leftmost_task_struct->pid,state_of_l_task);
+//
+//		if (send_sig(SIGCONT, leftmost_task_struct, 0) < 0) {
+//			printk(KERN_INFO "send_sig SIGCONT failed for task %d  First Process\n", leftmost_task_struct->pid);
+//			return;
+//		}
+//
+//		last_run_by_me = leftmost_rm_entity;
+////		leftmost_rm_entity->flags = 1;
+//		return ;
+//	}
+
+
+//	struct task_struct *curr_task = last_run_by_me->p;
+//
+//
+//
+//
+//	struct rb_node* leftmost;
+//	struct rm_entity* leftmost_rm_entity;
+//	struct task_struct* leftmost_task_struct;
+//	char state_of_curr_task;
+//
+//
+//	leftmost = rb_first_cached(&runnables);
+//	leftmost_rm_entity= container_of(leftmost, struct rm_entity, rb_nd);
+//	leftmost_task_struct = leftmost_rm_entity->p;
+//
+//	state_of_curr_task = task_state_to_char(curr_task);
+//
+//
+//	printk(KERN_INFO "Currently running %d, with deadline %llu, leftmost is %d, with deadline %llu\n", curr_task->pid, last_run_by_me->dl_deadline, leftmost_rm_entity->p->pid, leftmost_rm_entity->dl_deadline);
+//
+//
+//	if(state_of_curr_task != 'R' || curr_entity->flags != 1 || curr_entity->dl_priority > leftmost_rm_entity->dl_priority){
+//
+//
+//		if(state_of_curr_task == 'R'){
+//			if (send_sig(SIGSTOP, curr_task, 0) < 0) {
+//
+//	//			curr_entity->flags = 0;
+//
+//				printk(KERN_INFO "send_sig SIGSTOP failed for task %d\n", curr_task->pid);
+//				return;
+//			}
+//		}
+//
+//		if (send_sig(SIGCONT, leftmost_task_struct, 0) < 0) {
+////			leftmost_rm_entity->flags = 1;
+//			printk(KERN_INFO "send_sig SIGCONT failed for task %d\n", leftmost_task_struct->pid);
+//			return;
+//		}
+//
+//		last_run_by_me = leftmost_rm_entity;
+//	}
+//
+//	printk(KERN_INFO "So I schedule %d, with deadline %lld\n", last_run_by_me->p->pid, last_run_by_me->dl_deadline);
+//
+//
 
 
 }
@@ -194,53 +254,55 @@ void __schedule_rm(void){
 void callback_deadline_setter(struct timer_list *t_l)
 {
 
-	// // spin_lock(&sched_lock);
+	spin_lock(&sched_lock);
 
 
 	//	struct rm_entity *entity = (struct rm_entity *)data;
 	struct rm_entity *entity = container_of(t_l,struct rm_entity, callback_timer);
 
-	printk(KERN_INFO "Call back for %d\n", entity->p->pid);
+//	printk(KERN_INFO "Call back for %d\n", entity->p->pid);
+//
+//	printk(KERN_INFO "Inside CB");
+//
+//	list_for_each_entry(entity, &all_processes, list_nd) {
+//		printk(KERN_INFO "List info %d Prio %d %c \n", entity->p->pid, entity->dl_priority, task_state_to_char(entity->p));
+//	}
+//
+//
+//	if(entity->flags == 1){
+//		printk(KERN_INFO "Exceeded Deadline limit %d\n", entity->p->pid);
+//		rb_erase_cached(&(entity->rb_nd),&(runnables));
+//
+//	}else{
+//		entity->flags = 1;
+//	}
 
-	printk(KERN_INFO "Inside CB");
 
-	list_for_each_entry(entity, &all_processes, list_nd) {
-		printk(KERN_INFO "List info %d Prio %d %c \n", entity->p->pid, entity->dl_priority, task_state_to_char(entity->p));
-	}
-
-
-	if(entity->flags == 1){
-		printk(KERN_INFO "Exceeded Deadline limit %d\n", entity->p->pid);
-		rb_erase_cached(&(entity->rb_nd),&(runnables));
-
-	}else{
-		entity->flags = 1;
-	}
-
+	entity->flags = 1;
 	entity->deadline += msecs_to_jiffies(entity->dl_deadline);
 
 
-	struct rm_entity* pos;
-	struct rm_entity* n;
-
-	printk(KERN_INFO "RB Tree info Before Sched in Callback\n");
-
-	rbtree_postorder_for_each_entry_safe(pos, n, (&(runnables.rb_root)), rb_nd){
-		printk(KERN_INFO "RB Tree info %d Prio %d %c \n", pos->p->pid, pos->dl_priority, task_state_to_char(pos->p));
-
-	}
-
-	printk(KERN_INFO "RB Tree info Callink sched in callback\n");
-
-
-	rb_add_cached(&(entity->rb_nd), &runnables , __rm_less);
+//	struct rm_entity* pos;
+//	struct rm_entity* n;
+//
+//	printk(KERN_INFO "RB Tree info Before Sched in Callback\n");
+//
+//	rbtree_postorder_for_each_entry_safe(pos, n, (&(runnables.rb_root)), rb_nd){
+//		printk(KERN_INFO "RB Tree info %d Prio %d %c \n", pos->p->pid, pos->dl_priority, task_state_to_char(pos->p));
+//
+//	}
+//
+//	printk(KERN_INFO "RB Tree info Callink sched in callback\n");
+//
+//
+//	rb_add_cached(&(entity->rb_nd), &runnables , __rm_less);
 
 	__schedule_rm();
 
 	mod_timer(&(entity->callback_timer), entity->deadline);
 
 
-	// // spin_unlock(&sched_lock);
+	spin_unlock(&sched_lock);
 
 }
 
@@ -252,7 +314,7 @@ int rm_dm_implementation( pid_t pid,unsigned int  period,unsigned int  deadline,
 	if (pid < 1)
 		return -EINVAL;
 
-//	// // spin_lock(&sched_lock);
+//	spin_lock(&sched_lock);
 
 
 	struct rm_entity *rm_of_task = kmalloc(sizeof(struct rm_entity), GFP_KERNEL);
@@ -333,7 +395,7 @@ int rm_dm_implementation( pid_t pid,unsigned int  period,unsigned int  deadline,
 //
 //	mod_timer(&(rm_of_task->callback_timer), jiffies + msecs_to_jiffies(deadline));
 
-	__schedule_rm();
+//	__schedule_rm();
 
 
 	return 0;
@@ -374,7 +436,7 @@ bool check_for_dm(pid_t pid, unsigned int deadline, unsigned int period, unsigne
 
 	struct rm_entity* entity_for_interference;
 
-	//// // spin_lock(&sched_lock);
+	//spin_lock(&sched_lock);
 
 	u64 t = 0;
 
@@ -468,12 +530,12 @@ bool check_for_dm(pid_t pid, unsigned int deadline, unsigned int period, unsigne
 SYSCALL_DEFINE4(register_rm, pid_t, pid,unsigned int ,period,unsigned int ,deadline,unsigned int ,exec_time)
 {
 
-	if(check_for_rm(pid,deadline, period, exec_time)){
+//	if(check_for_rm(pid,deadline, period, exec_time)){
 		return rm_dm_implementation(pid,period,deadline,exec_time);
 //
-	}else{
-		return  -1;
-	}
+//	}else{
+//		return  -1;
+//	}
 
 
 }
@@ -484,11 +546,11 @@ SYSCALL_DEFINE4(register_dm, pid_t, pid,unsigned int ,period,unsigned int ,deadl
 	if (pid < 1)
 		return -EINVAL;
 
-	if(check_for_dm(pid,deadline, period, exec_time)){
+//	if(check_for_dm(pid,deadline, period, exec_time)){
 		return rm_dm_implementation(pid,period,deadline,exec_time);
-	}else{
-		return -1;
-	}
+//	}else{
+//		return -1;
+//	}
 
 
 }
@@ -502,7 +564,7 @@ SYSCALL_DEFINE1(yield, pid_t, pid)
 	struct rm_entity *entity;
 	struct task_struct *task;
 
-	// // spin_lock(&sched_lock);
+	spin_lock(&sched_lock);
 
 
 	printk(KERN_INFO "Yielding process %d\n", pid);
@@ -511,17 +573,17 @@ SYSCALL_DEFINE1(yield, pid_t, pid)
 		task = entity->p;
 		if (task && task->pid == pid) {
 			printk(KERN_INFO "Found rm_entity with pid %d\n", pid);
+			entity->flags = 0;
+//			if(entity->flags != -1){
+//				entity->flags = 0;
+//				rb_erase_cached(&(entity->rb_nd),&(runnables));
+//			}
 
-			if(entity->flags != -1){
-				entity->flags = 0;
-				rb_erase_cached(&(entity->rb_nd),&(runnables));
-			}
 
-
-			if (send_sig(SIGSTOP, task, 0) < 0) {
-				printk(KERN_ALERT "send_sig SIGSTOP failed for task %d\n", pid);
-//				return -1;
-			}
+//			if (send_sig(SIGSTOP, task, 0) < 0) {
+//				printk(KERN_ALERT "send_sig SIGSTOP failed for task %d\n", pid);
+////				return -1;
+//			}
 
 			printk(KERN_INFO "Erased, stopped and set flags for %d\n", pid);
 
@@ -532,7 +594,7 @@ SYSCALL_DEFINE1(yield, pid_t, pid)
 
 	__schedule_rm();
 
-	// // spin_unlock(&sched_lock);
+	spin_unlock(&sched_lock);
 	
 
 	return 0;
@@ -544,48 +606,58 @@ SYSCALL_DEFINE1(remove, pid_t, pid)
 	if (pid < 1)
 		return -EINVAL;
 
-	struct rm_entity *entity;
+	struct rm_entity *entity = NULL;
 	struct task_struct *task;
 
-	// // spin_lock(&sched_lock);
+	spin_lock(&sched_lock);
 
 	printk(KERN_INFO "Remove has been called for %d\n", pid);
 
 	list_for_each_entry(entity, &all_processes, list_nd) {
-		printk(KERN_INFO "List info %d Prio %d %c \n", entity->p->pid, entity->dl_priority, task_state_to_char(entity->p));
+		printk(KERN_INFO "List info %d Prio %d %c Flg %d \n", entity->p->pid, entity->dl_priority, task_state_to_char(entity->p),entity->flags);
 	}
 
 	list_for_each_entry(entity, &all_processes, list_nd) {
-		task = entity->p;
-		if (entity->p->pid == pid) {
+		if (entity && entity->p->pid == pid) {
 
-			if(entity->flags == 1)
-				rb_erase_cached(&(entity->rb_nd),&(runnables));
-
-			list_del(&(entity->list_nd));
-
-			entity->flags = 0;
-
-			struct sched_param param;
-			param.sched_priority = 0;
+			task = entity->p;
 
 
-			if (sched_setscheduler(task, SCHED_NORMAL, &param) == -1) {
-				printk(KERN_ALERT "SCHED_NORMAL problem with pid %d\n", pid);
-//				return -1;
+			entity->flags = -2;
+
+//			if(entity->flags == 1)
+//				rb_erase_cached(&(entity->rb_nd),&(runnables));
+
+//			list_del(&(entity->list_nd));
+
+//			entity->flags = 0;
+
+//			struct sched_param param;
+//			param.sched_priority = 0;
+//
+//
+//			if (sched_setscheduler(task, SCHED_NORMAL, &param) == -1) {
+//				printk(KERN_ALERT "SCHED_NORMAL problem with pid %d\n", pid);
+////				return -1;
+//			}
+
+
+			if (send_sig(SIGKILL, entity->p, 0) < 0) {
+				//			leftmost_rm_entity->flags = 1;
+				printk(KERN_INFO "send_sig SIGKILL failed for task %d\n", entity->p->pid);
+				return -1;
 			}
-
 
 			del_timer(&(entity->callback_timer));
 
 
-			printk(KERN_INFO "Last run was %d\n", last_run_by_me->p->pid );
+//			printk(KERN_INFO "Last run was %d\n", last_run_by_me->p->pid );
 
 //			if(last_run_by_me->p->pid == pid){
 //				last_run_by_me = NULL;
 //			}
 
-			last_run_by_me = NULL;
+//			last_run_by_me = NULL;
 
 			printk(KERN_INFO "Removed, deleted and normalised %d\n", pid);
 
@@ -597,12 +669,12 @@ SYSCALL_DEFINE1(remove, pid_t, pid)
 
 
 	list_for_each_entry(entity, &all_processes, list_nd) {
-		printk(KERN_INFO "List info %d Prio %d %c \n", entity->p->pid, entity->dl_priority, task_state_to_char(entity->p));
+		printk(KERN_INFO "List info %d Prio %d %c  Flag %d \n", entity->p->pid, entity->dl_priority, task_state_to_char(entity->p), entity->flags);
 	}
 
 	__schedule_rm();
 
-	// // spin_unlock(&sched_lock);
+	spin_unlock(&sched_lock);
 //
 
 	return 0;
@@ -611,7 +683,7 @@ SYSCALL_DEFINE1(remove, pid_t, pid)
 
 SYSCALL_DEFINE0(list){
 
-	// // spin_lock(&sched_lock);
+	spin_lock(&sched_lock);
 
 	struct rm_entity *entity;
 	printk(KERN_INFO "Printing process information...\n");
@@ -621,7 +693,7 @@ SYSCALL_DEFINE0(list){
 		       entity->p->pid, entity->dl_period, entity->dl_deadline, entity->dl_runtime);
 	}
 
-	// // spin_unlock(&sched_lock);
+	spin_unlock(&sched_lock);
 
 	return 0;
 
@@ -666,9 +738,6 @@ void __sched_pcp(void){
 	
 }
 
-#define MAX_GLOB_CEIL 1000000;
-
-u64 global_ceil = MAX_GLOB_CEIL;
 
 
 SYSCALL_DEFINE2(resource_map, pid_t, pid, unsigned int, rid){
@@ -679,7 +748,7 @@ SYSCALL_DEFINE2(resource_map, pid_t, pid, unsigned int, rid){
 
 	struct rm_entity *entity;
 
-	// // spin_lock(&sched_lock);
+	spin_lock(&sched_lock);
 
 
 	list_for_each_entry(entity, &all_processes, list_nd) {
@@ -722,7 +791,7 @@ SYSCALL_DEFINE2(resource_map, pid_t, pid, unsigned int, rid){
 
 	}
 
-	// // spin_unlock(&sched_lock);
+	spin_unlock(&sched_lock);
 
 
 		return 0;
@@ -838,7 +907,7 @@ int pcp_lock_impl( pid_t pid, unsigned int RID)
 
 	printk(KERN_INFO "Lock Called by PID: %d, RID: %d\n State of Resources: \n",pid,RID);
 
-	// // spin_lock(&sched_lock);
+	spin_lock(&sched_lock);
 
 
 	struct resource_pcp *res_for_print;
@@ -897,7 +966,7 @@ int pcp_lock_impl( pid_t pid, unsigned int RID)
 
 			printk(KERN_INFO "PID: %d, RID: %d I have the Ceil \n" ,pid,RID);
 
-			// // spin_unlock(&sched_lock);
+			spin_unlock(&sched_lock);
 
 			return 0;
 		}else if(this_entity->dl_priority < global_ceil){
@@ -906,16 +975,18 @@ int pcp_lock_impl( pid_t pid, unsigned int RID)
 
 			printk(KERN_INFO "PID: %d, RID: %d I set the Ceil \n" ,pid,RID);
 
-			// // spin_unlock(&sched_lock);
+			spin_unlock(&sched_lock);
 
 			return 0;
 		}else{
-			rb_erase_cached(&(this_entity->rb_nd),&(runnables));
+//			rb_erase_cached(&(this_entity->rb_nd),&(runnables));
 			list_add(&(this_entity->wait_list), &(resource_requested->wait_list));
-			if (send_sig(SIGSTOP, this_entity->p, 0) < 0) {
-				printk(KERN_ALERT "send_sig SIGSTOP failed for task %d\n", pid);
-				//				return -1;
-			}
+			this_entity->flags = 3;
+
+//			if (send_sig(SIGSTOP, this_entity->p, 0) < 0) {
+//				printk(KERN_ALERT "send_sig SIGSTOP failed for task %d\n", pid);
+//				//				return -1;
+//			}
 
 			printk(KERN_INFO "PID: %d, RID: %d I wait \n" ,pid,RID);
 
@@ -940,21 +1011,24 @@ int pcp_lock_impl( pid_t pid, unsigned int RID)
 				printk(KERN_INFO "Found the holder \n");
 
 				if(this_entity->dl_priority < entity_holding_the_resource-> dl_priority){
-					rb_erase_cached(&(entity_holding_the_resource->rb_nd),&(runnables));
+//					rb_erase_cached(&(entity_holding_the_resource->rb_nd),&(runnables));
 					entity_holding_the_resource-> dl_priority = this_entity->dl_priority;
-					rb_add_cached(&(entity_holding_the_resource->rb_nd), &runnables , __rm_less);
+//					rb_add_cached(&(entity_holding_the_resource->rb_nd), &runnables , __rm_less);
 
 				}
 				break;
 			}
 		}
 
-		rb_erase_cached(&(this_entity->rb_nd),&(runnables));
+//		rb_erase_cached(&(this_entity->rb_nd),&(runnables));
 		list_add(&(this_entity->wait_list), &(resource_requested->wait_list));
-		if (send_sig(SIGSTOP, this_entity->p, 0) < 0) {
-			printk(KERN_ALERT "send_sig SIGSTOP failed for task %d\n", pid);
-			//				return -1;
-		}
+
+		this_entity->flags = 3;
+
+//		if (send_sig(SIGSTOP, this_entity->p, 0) < 0) {
+//			printk(KERN_ALERT "send_sig SIGSTOP failed for task %d\n", pid);
+//			//				return -1;
+//		}
 
 
 
@@ -989,7 +1063,7 @@ int pcp_lock_impl( pid_t pid, unsigned int RID)
 	__schedule_rm();
 
 
-	// // spin_unlock(&sched_lock);
+	spin_unlock(&sched_lock);
 
 
 	return  0;
@@ -1015,7 +1089,7 @@ SYSCALL_DEFINE2(pcp_unlock, pid_t, pid, unsigned int, RID){
 
 	struct resource_pcp *res_for_print;
 
-	// // spin_lock(&sched_lock);
+	spin_lock(&  sched_lock);
 
 
 	list_for_each_entry(res_for_print, &resource_list_pcp, glob_list) {
@@ -1079,10 +1153,10 @@ SYSCALL_DEFINE2(pcp_unlock, pid_t, pid, unsigned int, RID){
 
 	}
 
-	rb_erase_cached(&(entity->rb_nd),&(runnables));
+//	rb_erase_cached(&(entity->rb_nd),&(runnables));
 
 
-	rb_add_cached(&(entity->rb_nd), &runnables , __rm_less);
+//	rb_add_cached(&(entity->rb_nd), &runnables , __rm_less);
 
 	printk(KERN_INFO "PID: %d, RID: %d Global Ceiling and Process Priority set \n" ,pid,RID);
 
@@ -1145,7 +1219,9 @@ SYSCALL_DEFINE2(pcp_unlock, pid_t, pid, unsigned int, RID){
 
 					list_del(&(min_entity_waiting->wait_list));
 
-					rb_add_cached(&(min_entity_waiting->rb_nd), &runnables , __rm_less);
+					min_entity_waiting->flags = 1;
+
+//					rb_add_cached(&(min_entity_waiting->rb_nd), &runnables , __rm_less);
 
 
 				}else if(min_entity_waiting->dl_priority < global_ceil){
@@ -1154,7 +1230,8 @@ SYSCALL_DEFINE2(pcp_unlock, pid_t, pid, unsigned int, RID){
 
 					list_del(&(min_entity_waiting->wait_list));
 
-					rb_add_cached(&(min_entity_waiting->rb_nd), &runnables , __rm_less);
+					min_entity_waiting->flags = 1;
+//					rb_add_cached(&(min_entity_waiting->rb_nd), &runnables , __rm_less);
 				}
 			}
 
