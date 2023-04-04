@@ -154,7 +154,24 @@ void __schedule_rm(void){
 			printk(KERN_INFO "send_sig SIGCONT failed for task %d\n", min_ent->p->pid);
 			return;
 		}
-		
+
+	}
+
+	int all_done = 1;
+
+	list_for_each_entry(entity, &all_processes, list_nd) {
+		if(entity ->flags != -2){
+			all_done = 0;
+			break;
+		}
+	}
+
+	if(all_done){
+		struct rm_entity *s, *tmp;
+		list_for_each_entry_safe(s, tmp, &all_processes, list_nd) {
+			list_del(&s->list_nd);
+			kfree(s);
+		}
 	}
 
 	printk(KERN_INFO "Done With Scheduling");
@@ -479,7 +496,7 @@ bool check_for_dm(pid_t pid, unsigned int deadline, unsigned int period, unsigne
 
 				return false;
 			}
-			
+
 		}
 
 	}
@@ -530,12 +547,12 @@ bool check_for_dm(pid_t pid, unsigned int deadline, unsigned int period, unsigne
 SYSCALL_DEFINE4(register_rm, pid_t, pid,unsigned int ,period,unsigned int ,deadline,unsigned int ,exec_time)
 {
 
-//	if(check_for_rm(pid,deadline, period, exec_time)){
+	if(check_for_rm(pid,deadline, period, exec_time)){
 		return rm_dm_implementation(pid,period,deadline,exec_time);
 //
-//	}else{
-//		return  -1;
-//	}
+	}else{
+		return  -1;
+	}
 
 
 }
@@ -546,11 +563,11 @@ SYSCALL_DEFINE4(register_dm, pid_t, pid,unsigned int ,period,unsigned int ,deadl
 	if (pid < 1)
 		return -EINVAL;
 
-//	if(check_for_dm(pid,deadline, period, exec_time)){
+	if(check_for_dm(pid,deadline, period, exec_time)){
 		return rm_dm_implementation(pid,period,deadline,exec_time);
-//	}else{
-//		return -1;
-//	}
+	}else{
+		return -1;
+	}
 
 
 }
@@ -595,7 +612,7 @@ SYSCALL_DEFINE1(yield, pid_t, pid)
 	__schedule_rm();
 
 	spin_unlock(&sched_lock);
-	
+
 
 	return 0;
 
@@ -735,7 +752,7 @@ LIST_HEAD(process_list_pcp);
 
 
 void __sched_pcp(void){
-	
+
 }
 
 
@@ -934,6 +951,9 @@ int pcp_lock_impl( pid_t pid, unsigned int RID)
 	list_for_each_entry(entity, &all_processes, list_nd) {
 		if(entity->p->pid == pid){
 			this_entity = entity;
+
+			printk(KERN_INFO "PID: %d, RID: %d Got This Entity \n" ,pid,RID);
+
 			break;
 		}
 	}
@@ -1089,7 +1109,7 @@ SYSCALL_DEFINE2(pcp_unlock, pid_t, pid, unsigned int, RID){
 
 	struct resource_pcp *res_for_print;
 
-	spin_lock(&  sched_lock);
+	spin_lock(&sched_lock);
 
 
 	list_for_each_entry(res_for_print, &resource_list_pcp, glob_list) {
@@ -1226,7 +1246,7 @@ SYSCALL_DEFINE2(pcp_unlock, pid_t, pid, unsigned int, RID){
 
 				}else if(min_entity_waiting->dl_priority < global_ceil){
 					resource->acquires_pid = min_entity_waiting->p->pid;
-					global_ceil = min_entity_waiting->dl_priority;
+					global_ceil = min(global_ceil,resource->resource_ceil);
 
 					list_del(&(min_entity_waiting->wait_list));
 
@@ -1260,7 +1280,7 @@ SYSCALL_DEFINE2(pcp_unlock, pid_t, pid, unsigned int, RID){
 
 	__schedule_rm();
 
-	// spin_unlock(&sched_lock);
+	 spin_unlock(&sched_lock);
 
 
 	return  0;
