@@ -624,6 +624,7 @@ SYSCALL_DEFINE2(resource_map, pid_t, pid, unsigned int, rid){
 	list_for_each_entry(entity, &all_processes, list_nd) {
 		if(entity->p->pid == pid){
 			proc_prio = entity->dl_deadline;
+			break;
 		}
 	}
 
@@ -653,7 +654,14 @@ SYSCALL_DEFINE2(resource_map, pid_t, pid, unsigned int, rid){
 
 	resource->resource_ceil = min(resource->resource_ceil,proc_prio);
 
-	return 0;
+	struct resource_pcp *res_for_print;
+	list_for_each_entry(res_for_print, &resource_list_pcp, glob_list) {
+
+		printk(KERN_INFO "RID: %d Res Ceil: %d Res Acq: %d ",res_for_print->rid,res_for_print->resource_ceil,res_for_print->acquires_pid);
+
+	}
+
+		return 0;
 //	resource->resource_prio = resource->resource_ceil;
 
 
@@ -764,6 +772,23 @@ SYSCALL_DEFINE1(start_pcp,unsigned int, RID){
 int pcp_lock_impl( pid_t pid, unsigned int RID)
 {
 
+	printk(KERN_INFO "Lock Called by PID: %d, RID: %d\n State of Resources: \n",pid,RID);
+
+
+	struct resource_pcp *res_for_print;
+	list_for_each_entry(res_for_print, &resource_list_pcp, glob_list) {
+
+		printk(KERN_INFO "Global Ceil: %d RID: %d Res Ceil: %d Res Acq: %d Wait List:: \n ",global_ceil,res_for_print->rid,res_for_print->resource_ceil,res_for_print->acquires_pid);
+
+		struct rm_entity *entity_for_print;
+
+
+		list_for_each_entry(entity_for_print, &(res_for_print->wait_list), wait_list) {
+			printk(KERN_INFO "		Ent: %d, Prio: %d, Flag: %d \n", entity_for_print->p->pid, entity_for_print->dl_priority,entity_for_print->flags);
+		}
+	}
+
+
 	u64 proc_prio;
 	struct rm_entity *entity;
 	struct rm_entity *this_entity;
@@ -777,6 +802,9 @@ int pcp_lock_impl( pid_t pid, unsigned int RID)
 			break;
 		}
 	}
+
+//	printk(KERN_INFO "PID: %d, RID: %d \n" ,pid,RID);
+	printk(KERN_INFO "PID: %d, RID: %d Got Entity \n" ,pid,RID);
 
 	int do_i_have_a_system_ceil = 0;
 
@@ -793,14 +821,25 @@ int pcp_lock_impl( pid_t pid, unsigned int RID)
 		}
 	}
 
+	printk(KERN_INFO "PID: %d, RID: %d Got Ceil and Resource \n" ,pid,RID);
+
+
 
 	if(resource_requested->acquires_pid == -1){
-		if(do_i_have_a_system_ceil){
+		if(do_i_have_a_system_ceil != 0){
 			resource_requested->acquires_pid = pid;
+
+			printk(KERN_INFO "PID: %d, RID: %d I have the Ceil \n" ,pid,RID);
+
+
 			return 0;
 		}else if(this_entity->dl_priority < global_ceil){
 			resource_requested->acquires_pid = pid;
-			global_ceil = this_entity->dl_priority;
+//			global_ceil = this_entity->dl_priority;
+
+			printk(KERN_INFO "PID: %d, RID: %d I set the Ceil \n" ,pid,RID);
+
+
 			return 0;
 		}else{
 			rb_erase_cached(&(this_entity->rb_nd),&(runnables));
@@ -810,12 +849,22 @@ int pcp_lock_impl( pid_t pid, unsigned int RID)
 				//				return -1;
 			}
 
+			printk(KERN_INFO "PID: %d, RID: %d I wait \n" ,pid,RID);
+
+
 		}
+
+
+
+
+
 	}else{
 
 //		list_add(&(this_entity->wait_list), &(resource_requested->wait_list));
 
 		struct rm_entity *entity_holding_the_resource;
+
+		printk(KERN_INFO "PID: %d, RID: %d Somebody has this lock %d \n" ,pid,RID, resource_requested->acquires_pid);
 
 
 		list_for_each_entry(entity_holding_the_resource, &all_processes, list_nd) {
@@ -841,8 +890,32 @@ int pcp_lock_impl( pid_t pid, unsigned int RID)
 
 	}
 
+	global_ceil = MAX_GLOB_CEIL;
+
+	list_for_each_entry(resource, &resource_list_pcp, glob_list) {
+
+		if(resource->acquires_pid != -1){
+			global_ceil = min(global_ceil, resource->resource_ceil);
+		}
+	}
+
+
 	__schedule_rm();
 
+
+	printk(KERN_INFO "Done with Lock");
+
+	list_for_each_entry(res_for_print, &resource_list_pcp, glob_list) {
+
+		printk(KERN_INFO "Global Ceil: %d RID: %d Res Ceil: %d Res Acq: %d Wait List:: \n ",global_ceil,res_for_print->rid,res_for_print->resource_ceil,res_for_print->acquires_pid);
+
+		struct rm_entity *entity_for_print;
+
+
+		list_for_each_entry(entity_for_print, &(res_for_print->wait_list), wait_list) {
+			printk(KERN_INFO "		Ent: %d, Prio: %d, Flag: %d \n", entity_for_print->p->pid, entity_for_print->dl_priority,entity_for_print->flags);
+		}
+	}
 
 	return  0;
 }
@@ -863,6 +936,22 @@ SYSCALL_DEFINE2(pcp_lock, pid_t, pid, unsigned int, RID)
 
 SYSCALL_DEFINE2(pcp_unlock, pid_t, pid, unsigned int, RID){
 
+	printk(KERN_INFO "Called Unlock %d on %d", pid, RID);
+
+	struct resource_pcp *res_for_print;
+
+	list_for_each_entry(res_for_print, &resource_list_pcp, glob_list) {
+
+		printk(KERN_INFO "Global Ceil: %d RID: %d Res Ceil: %d Res Acq: %d Wait List:: \n ",global_ceil,res_for_print->rid,res_for_print->resource_ceil,res_for_print->acquires_pid);
+
+		struct rm_entity *entity_for_print;
+
+
+		list_for_each_entry(entity_for_print, &(res_for_print->wait_list), wait_list) {
+			printk(KERN_INFO "		Ent: %d, Prio: %d, Flag: %d \n", entity_for_print->p->pid, entity_for_print->dl_priority,entity_for_print->flags);
+		}
+	}
+
 	global_ceil =MAX_GLOB_CEIL;
 
 	struct rm_entity *entity;
@@ -875,6 +964,7 @@ SYSCALL_DEFINE2(pcp_unlock, pid_t, pid, unsigned int, RID){
 			break;
 		}
 	}
+
 
 	u64 min_prio_of_waiting_on_this_res;
 
@@ -911,13 +1001,35 @@ SYSCALL_DEFINE2(pcp_unlock, pid_t, pid, unsigned int, RID){
 	}
 
 
+	rb_erase_cached(&(entity->rb_nd),&(runnables));
+
+	rb_add_cached(&(entity->rb_nd), &runnables , __rm_less);
+
+	printk(KERN_INFO "PID: %d, RID: %d Global Ceiling and Process Priority set \n" ,pid,RID);
+
+	list_for_each_entry(res_for_print, &resource_list_pcp, glob_list) {
+
+		printk(KERN_INFO "Global Ceil: %d RID: %d Res Ceil: %d Res Acq: %d Wait List:: \n ",global_ceil,res_for_print->rid,res_for_print->resource_ceil,res_for_print->acquires_pid);
+
+		struct rm_entity *entity_for_print;
+
+
+		list_for_each_entry(entity_for_print, &(res_for_print->wait_list), wait_list) {
+			printk(KERN_INFO "		Ent: %d, Prio: %d, Flag: %d \n", entity_for_print->p->pid, entity_for_print->dl_priority,entity_for_print->flags);
+		}
+	}
+
+
+
+
+
 	list_for_each_entry(resource, &resource_list_pcp, glob_list) {
 
 		if(resource -> acquires_pid == -1){
 
 
 			struct rm_entity *entity;
-			struct rm_entity *min_entity_waiting;
+			struct rm_entity *min_entity_waiting = NULL;
 
 
 			u64 min_entity_waiting_prio = MAX_GLOB_CEIL;
@@ -931,42 +1043,65 @@ SYSCALL_DEFINE2(pcp_unlock, pid_t, pid, unsigned int, RID){
 
 			}
 
-			struct resource_pcp *resource_to_check_ceil;
+			if(min_entity_waiting){
 
-			u64 min_entity_waiting_holding_prio = min_entity_waiting->dl_priority;
 
-			list_for_each_entry(resource_to_check_ceil, &resource_list_pcp, glob_list) {
-				if(resource_to_check_ceil->acquires_pid == min_entity_waiting->p->pid){
-					min_entity_waiting_holding_prio = min(min_entity_waiting_holding_prio, resource_to_check_ceil->resource_ceil);
+				struct resource_pcp *resource_to_check_ceil;
+
+				int am_i_system_ceil = 0;
+
+				u64 min_entity_waiting_holding_system_ceil = min_entity_waiting->dl_priority;
+
+				list_for_each_entry(resource_to_check_ceil, &resource_list_pcp, glob_list) {
+
+					if(resource_to_check_ceil->acquires_pid == min_entity_waiting->p->pid &&  resource_to_check_ceil->resource_ceil == global_ceil){
+
+						am_i_system_ceil = 1;
+					}
+				}
+
+				if(am_i_system_ceil ){
+
+					resource->acquires_pid = min_entity_waiting->p->pid;
+
+					list_del(&(min_entity_waiting->wait_list));
+
+					rb_add_cached(&(min_entity_waiting->rb_nd), &runnables , __rm_less);
+
+
+				}else if(min_entity_waiting->dl_priority < global_ceil){
+					resource->acquires_pid = pid;
+					global_ceil = min_entity_waiting->dl_priority;
+
+					list_del(&(min_entity_waiting->wait_list));
+
+					rb_add_cached(&(min_entity_waiting->rb_nd), &runnables , __rm_less);
 				}
 			}
-
-			if(min_entity_waiting_holding_prio == global_ceil ){
-
-				resource->acquires_pid = min_entity_waiting->p->pid;
-
-				list_del(&(min_entity_waiting->wait_list));
-
-				rb_add_cached(&(min_entity_waiting->rb_nd), &runnables , __rm_less);
-
-
-			}else if(min_entity_waiting->dl_priority < global_ceil){
-				resource->acquires_pid = pid;
-				global_ceil = min_entity_waiting->dl_priority;
-
-				list_del(&(min_entity_waiting->wait_list));
-
-				rb_add_cached(&(min_entity_waiting->rb_nd), &runnables , __rm_less);
-			}
-
 
 		}
 
 
 	}
 
+	printk(KERN_INFO "PID: %d, RID: %d Given Resources \n" ,pid,RID);
+
 
 	__schedule_rm();
+
+
+	printk(KERN_INFO "Done with Unlock");
+	list_for_each_entry(res_for_print, &resource_list_pcp, glob_list) {
+
+		printk(KERN_INFO "Global Ceil: %d RID: %d Res Ceil: %d Res Acq: %d Wait List:: \n ",global_ceil,res_for_print->rid,res_for_print->resource_ceil,res_for_print->acquires_pid);
+
+		struct rm_entity *entity_for_print;
+
+
+		list_for_each_entry(entity_for_print, &(res_for_print->wait_list), wait_list) {
+			printk(KERN_INFO "		Ent: %d, Prio: %d, Flag: %d \n", entity_for_print->p->pid, entity_for_print->dl_priority,entity_for_print->flags);
+		}
+	}
 
 
 
