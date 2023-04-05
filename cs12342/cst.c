@@ -32,6 +32,9 @@
 
 #include <linux/jiffies.h>
 
+#include <linux/radix-tree.h>
+
+
 // static LIST_HEAD(cst_list_head);
 
 struct rb_root_cached runnables = RB_ROOT_CACHED;
@@ -83,6 +86,7 @@ struct rm_entity{
 };
 
 
+// Comparator function
 static  bool __rm_less(struct rb_node *a, const struct rb_node *b)
 {
 	struct rm_entity *f =   rb_entry((a), struct rm_entity, rb_nd);
@@ -103,15 +107,14 @@ void __schedule_rm(void){
 	struct rm_entity* n;
 
 
+	// Book Keeping
 	rbtree_postorder_for_each_entry_safe(pos, n, (&(runnables.rb_root)), rb_nd){
 		printk(KERN_INFO "RB Tree info %d Prio %d %c \n", pos->p->pid, pos->dl_priority, task_state_to_char(pos->p));
 	}
 
 	printk(KERN_INFO "Inside Sched");
 
-
 	struct rm_entity *entity ;
-
 	list_for_each_entry(entity, &all_processes, list_nd) {
 		printk(KERN_INFO "List info %d Prio %d %c Flags %d \n", entity->p->pid,
 		       entity->dl_priority, task_state_to_char(entity->p) , entity->flags);
@@ -187,9 +190,23 @@ void __schedule_rm(void){
 //		printk(KERN_INFO "List info %d Prio %d %c \n", entity->p->pid, entity->dl_priority, task_state_to_char(entity->p));
 //	}
 
+
+
+
+
+
+
+
+
+
+
+	// Main Code
+
 	if(RB_EMPTY_ROOT(&(runnables.rb_root))){
 		return ;
 	}
+
+	// If no last process or last process dead/finished;
 
 	if(!curr_entity){
 		struct rb_node* leftmost;
@@ -236,6 +253,8 @@ void __schedule_rm(void){
 
 	printk(KERN_INFO "Currently running %d, with deadline %llu, leftmost is %d, with deadline %llu\n", curr_task->pid, last_run_by_me->dl_deadline, leftmost_rm_entity->p->pid, leftmost_rm_entity->dl_deadline);
 
+
+	// If a better or dead process is here, make it run;
 
 	if(state_of_curr_task != 'R' || curr_entity->flags != 1 || curr_entity->dl_priority > leftmost_rm_entity->dl_priority){
 
@@ -286,6 +305,7 @@ void callback_deadline_setter(struct timer_list *t_l)
 	}
 
 
+	// If has yielded first time, resurrect this processes
 	if(entity->flags != -1){
 
 		if(entity->flags == 1){
@@ -314,15 +334,15 @@ void callback_deadline_setter(struct timer_list *t_l)
 	printk(KERN_INFO "RB Tree info Callink sched in callback\n");
 
 
+	// If has yielded first time, Add to the runnables rb tree
 	if(entity->flags != -1) {
 		rb_add_cached(&(entity->rb_nd), &runnables, __rm_less);
 		__schedule_rm();
 	}
+
 	mod_timer(&(entity->callback_timer), entity->deadline);
 
-
 	spin_unlock(&sched_lock);
-
 }
 
 
@@ -333,10 +353,13 @@ int rm_dm_implementation( pid_t pid,unsigned int  period,unsigned int  deadline,
 	if (pid < 1)
 		return -EINVAL;
 
-//	spin_lock(&sched_lock);
-
 
 	struct rm_entity *rm_of_task = kmalloc(sizeof(struct rm_entity), GFP_KERNEL);
+
+	if (!rm_of_task) {
+		printk(KERN_ERR "Error: Failed to allocate memory for rm_of_task\n");
+		return -ENOMEM;
+	}
 
 	struct task_struct *task = find_get_task_by_vpid (pid);
 
@@ -360,24 +383,20 @@ int rm_dm_implementation( pid_t pid,unsigned int  period,unsigned int  deadline,
 	list_add(&(rm_of_task->list_nd), &all_processes);
 
 
-
-//	struct sched_param param = { .sched_priority = prio_of_process };
-//
-//	if (sched_setscheduler(task, SCHED_RR, &param) == -1) {
-//		printk(KERN_INFO "sched_setscheduler Failed for %d\n", pid);
-//		return -1;
-//	}
-
 	struct sched_attr *attr = kmalloc(sizeof(struct sched_attr), GFP_KERNEL);
+	if (!attr) {
+		printk(KERN_ERR "Error: Failed to allocate memory for attr struct\n");
+		return -ENOMEM;
+	}
+
+
+
 	attr->size = sizeof(struct sched_attr);
 	attr->sched_policy = SCHED_RR;
 	attr->sched_priority = prio_of_process;
 
+	sched_setattr(task, attr);
 
-	if (sched_setattr(task, attr) == -1) {
-		printk(KERN_ALERT "sched_setattr Failed for %d\n", pid);
-//			return -1;
-	}
 
 	cpumask_t cpu_mask;
 	cpumask_clear(&cpu_mask);
@@ -386,7 +405,6 @@ int rm_dm_implementation( pid_t pid,unsigned int  period,unsigned int  deadline,
 
 	if (set_cpus_allowed_ptr(task, &cpu_mask) == -1) {
 		printk(KERN_ALERT "set_cpus_allowed_ptr failed for PID %d\n", pid);
-//		return -1;
 	}
 
 //	if (send_sig(SIGSTOP, task, 0) < 0) {
@@ -410,9 +428,6 @@ int rm_dm_implementation( pid_t pid,unsigned int  period,unsigned int  deadline,
 	(rm_of_task->callback_timer).function = callback_deadline_setter;
 
 	add_timer(&(rm_of_task->callback_timer));
-//	timer_setup(&(rm_of_task->callback_timer), callback_deadline_setter, (unsigned long)&rm_of_task);
-//
-//	mod_timer(&(rm_of_task->callback_timer), jiffies + msecs_to_jiffies(deadline));
 
 //	__schedule_rm();
 
@@ -549,12 +564,16 @@ bool check_for_dm(pid_t pid, unsigned int deadline, unsigned int period, unsigne
 SYSCALL_DEFINE4(register_rm, pid_t, pid,unsigned int ,period,unsigned int ,deadline,unsigned int ,exec_time)
 {
 
+	if (pid < 1 || period == 0 || deadline == 0 ||  exec_time == 0 || exec_time > deadline || period != deadline)
+		return -EINVAL;
+
+	int val_to_return = -22;
+
 	if(check_for_rm(pid,deadline, period, exec_time)){
-		return rm_dm_implementation(pid,period,deadline,exec_time);
-//
-	}else{
-		return  -1;
+		val_to_return =  rm_dm_implementation(pid,period,deadline,exec_time);
 	}
+
+	return val_to_return;
 
 
 }
@@ -562,14 +581,16 @@ SYSCALL_DEFINE4(register_rm, pid_t, pid,unsigned int ,period,unsigned int ,deadl
 SYSCALL_DEFINE4(register_dm, pid_t, pid,unsigned int ,period,unsigned int ,deadline,unsigned int ,exec_time)
 {
 
-	if (pid < 1)
+	if (pid < 1 || period == 0 || deadline == 0 ||  exec_time == 0 || exec_time > deadline || period < deadline)
 		return -EINVAL;
 
-	if(check_for_dm(pid,deadline, period, exec_time)){
-		return rm_dm_implementation(pid,period,deadline,exec_time);
-	}else{
-		return -1;
+	int val_to_return = -22;
+
+	if(check_for_rm(pid,deadline, period, exec_time)){
+		val_to_return =  rm_dm_implementation(pid,period,deadline,exec_time);
 	}
+
+	return val_to_return;
 
 
 }
@@ -627,7 +648,7 @@ SYSCALL_DEFINE1(remove, pid_t, pid)
 	if (pid < 1)
 		return -EINVAL;
 
-	struct rm_entity *entity = NULL;
+	struct rm_entity *entity, *tmp;
 	struct task_struct *task;
 
 	spin_lock(&sched_lock);
@@ -637,14 +658,11 @@ SYSCALL_DEFINE1(remove, pid_t, pid)
 	list_for_each_entry(entity, &all_processes, list_nd) {
 		printk(KERN_INFO "List info %d Prio %d %c Flg %d \n", entity->p->pid, entity->dl_priority, task_state_to_char(entity->p),entity->flags);
 	}
-
-	list_for_each_entry(entity, &all_processes, list_nd) {
+	list_for_each_entry_safe(entity, tmp, &all_processes, list_nd) {
 		if (entity && entity->p->pid == pid) {
 
 			task = entity->p;
 
-
-//			entity->flags = -2;
 
 			if(entity->flags == 1)
 				rb_erase_cached(&(entity->rb_nd),&(runnables));
@@ -679,6 +697,9 @@ SYSCALL_DEFINE1(remove, pid_t, pid)
 			}
 
 			last_run_by_me = NULL;
+
+			list_del(&(entity->list_nd));
+			kfree(entity);
 
 			printk(KERN_INFO "Removed, deleted and normalised %d\n", pid);
 
@@ -724,7 +745,7 @@ SYSCALL_DEFINE0(list){
 
 // Define a struct for each resource
 struct resource_pcp {
-	unsigned int rid;
+	unsigned long rid;
 
 //	int acquired;
 
@@ -749,9 +770,12 @@ struct resource_pcp {
 ////	struct list_head my_list; // All the resources requested by this process
 //};
 
-LIST_HEAD(resource_list_pcp);
+//LIST_HEAD(resource_list_pcp);
 
-LIST_HEAD(process_list_pcp);
+//LIST_HEAD(process_list_pcp);
+
+RADIX_TREE(resource_idr_pcp, GFP_KERNEL);
+
 
 
 
@@ -782,12 +806,17 @@ SYSCALL_DEFINE2(resource_map, pid_t, pid, unsigned int, rid){
 
 	int resource_found = 0;
 
-	list_for_each_entry(resource, &resource_list_pcp, glob_list) {
-		if (resource->rid == rid) {
-			resource_found = 1;
-			break;
-		}
-	}
+//	list_for_each_entry(resource, &resource_list_pcp, glob_list) {
+//		if (resource->rid == rid) {
+//			resource_found = 1;
+//			break;
+//		}
+//	}
+
+	 resource =  (struct  resource_pcp*) radix_tree_lookup(&resource_idr_pcp, rid);
+
+	 if(resource)
+		resource_found = 1;
 
 	if (!resource_found) {
 		resource = kmalloc(sizeof(struct resource_pcp), GFP_KERNEL);
@@ -800,115 +829,40 @@ SYSCALL_DEFINE2(resource_map, pid_t, pid, unsigned int, rid){
 		resource->acquires_pid = -1;
 //		resource->acquired = 0;
 		INIT_LIST_HEAD(&resource->wait_list);
-		list_add(&resource->glob_list, &resource_list_pcp);
+
+		radix_tree_insert(&resource_idr_pcp,rid,resource);
+
+//		list_add(&resource->glob_list, &resource_list_pcp);
 	}
 
 	resource->resource_ceil = min(resource->resource_ceil,proc_prio);
 
-	struct resource_pcp *res_for_print;
-	list_for_each_entry(res_for_print, &resource_list_pcp, glob_list) {
+	struct radix_tree_iter iter;
+	void **slot;
+	int num_dirty = 0;
+	radix_tree_for_each_slot(slot,&resource_idr_pcp,&iter,0){
+		struct resource_pcp *res_for_print = (struct resource_pcp *)radix_tree_deref_slot(slot);
+		if(res_for_print){
+			printk(KERN_INFO "RID: %d Res Ceil: %d Res Acq: %d ",res_for_print->rid,res_for_print->resource_ceil,res_for_print->acquires_pid);
 
-		printk(KERN_INFO "RID: %d Res Ceil: %d Res Acq: %d ",res_for_print->rid,res_for_print->resource_ceil,res_for_print->acquires_pid);
-
+		}
 	}
+
+//	struct resource_pcp *res_for_print;
+//	list_for_each_entry(res_for_print, &resource_list_pcp, glob_list) {
+//
+//		printk(KERN_INFO "RID: %d Res Ceil: %d Res Acq: %d ",res_for_print->rid,res_for_print->resource_ceil,res_for_print->acquires_pid);
+//
+//	}
 
 	spin_unlock(&sched_lock);
 
 
-		return 0;
-//	resource->resource_prio = resource->resource_ceil;
-
-
-
-//	struct process_pcp *process;
-//	struct resource_pcp *resource;
-//	int process_found = 0, resource_found = 0;
-//
-//	// Check if the process already exists in the process list
-//	list_for_each_entry(process, &process_list_pcp, glob_list) {
-//		if (process->pid == pid) {
-//			process_found = 1;
-//			break;
-//		}
-//	}
-//
-//	// If the process is not found, create a new process struct and add it to the list
-//	if (!process_found) {
-//		process = kmalloc(sizeof(struct process_pcp), GFP_KERNEL);
-//		if (!process) {
-//			printk(KERN_ERR "Error: Failed to allocate memory for process struct\n");
-//			return -ENOMEM;
-//		}
-//		process->pid = pid;
-//		INIT_LIST_HEAD(&process->my_list);
-//		list_add(&process->glob_list, &process_list_pcp);
-//	}
-//
-//	// Check if the resource already exists in the resource list
-//	list_for_each_entry(resource, &resource_list_pcp, glob_list) {
-//		if (resource->rid == rid) {
-//			resource_found = 1;
-//			break;
-//		}
-//	}
-//
-//	// If the resource is not found, create a new resource struct and add it to the list
-//	if (!resource_found) {
-//		resource = kmalloc(sizeof(struct resource_pcp), GFP_KERNEL);
-//		if (!resource) {
-//			printk(KERN_ERR "Error: Failed to allocate memory for resource struct\n");
-//			return -ENOMEM;
-//		}
-//		resource->rid = rid;
-//		resource->resource_ceil = 100000000;
-//		INIT_LIST_HEAD(&resource->my_list);
-//		list_add(&resource->glob_list, &resource_list_pcp);
-//	}
-//
-//
-//	struct process_pcp *process_to_add_to_res;
-//	struct resource_pcp *resource_to_add_to_process;
-//
-//
-//	process_to_add_to_res = kmalloc(sizeof(struct process_pcp), GFP_KERNEL);
-//	resource_to_add_to_process = kmalloc(sizeof(struct resource_pcp), GFP_KERNEL);
-//
-//	process_to_add_to_res->pid = pid;
-//
-//
-//	list_for_each_entry(entity, &all_processes, list_nd) {
-//		if(entity->p->pid == pid){
-//			process_to_add_to_res->process_prio = entity->dl_priority;
-//			break;
-//		}
-//
-//	}
-//
-//	resource_to_add_to_process->rid = rid;
-//
-//	// Add the process to the resource's list of processes
-//	list_add(&process_to_add_to_res->my_list, &resource->my_list);
-//
-//	// Add the resource to the process's list of resources
-//	list_add(&resource_to_add_to_process->my_list, &process->my_list);
-
-//	return 0;
-
+	return 0;
 }
 
 
 SYSCALL_DEFINE1(start_pcp,unsigned int, RID){
-
-//	struct process_pcp *process;
-//	struct resource_pcp *resource;
-//
-//	list_for_each_entry(resource, &resource_list_pcp, glob_list) {
-//		list_for_each_entry(process, &(resource->my_list), my_list) {
-//			resource->resource_ceil = min(resource->resource_ceil , process->process_prio);
-//			global_ceil = min(global_ceil, resource->resource_ceil);
-//		}
-//	}
-
 
 	pcp_begin = 1;
 
@@ -923,7 +877,7 @@ SYSCALL_DEFINE1(start_pcp,unsigned int, RID){
 
 
 
-int pcp_lock_impl( pid_t pid, unsigned int RID)
+SYSCALL_DEFINE2(pcp_lock, pid_t, pid, unsigned int, RID)
 {
 
 	printk(KERN_INFO "Lock Called by PID: %d, RID: %d\n State of Resources: \n",pid,RID);
@@ -931,16 +885,34 @@ int pcp_lock_impl( pid_t pid, unsigned int RID)
 	spin_lock(&sched_lock);
 
 
-	struct resource_pcp *res_for_print;
-	list_for_each_entry(res_for_print, &resource_list_pcp, glob_list) {
+//	struct resource_pcp *res_for_print;
+//	list_for_each_entry(res_for_print, &resource_list_pcp, glob_list) {
+//
+//		printk(KERN_INFO "Global Ceil: %d RID: %d Res Ceil: %d Res Acq: %d Wait List:: \n ",global_ceil,res_for_print->rid,res_for_print->resource_ceil,res_for_print->acquires_pid);
+//
+//		struct rm_entity *entity_for_print;
+//
+//
+//		list_for_each_entry(entity_for_print, &(res_for_print->wait_list), wait_list) {
+//			printk(KERN_INFO "		Ent: %d, Prio: %d, Flag: %d \n", entity_for_print->p->pid, entity_for_print->dl_priority,entity_for_print->flags);
+//		}
+//	}
 
-		printk(KERN_INFO "Global Ceil: %d RID: %d Res Ceil: %d Res Acq: %d Wait List:: \n ",global_ceil,res_for_print->rid,res_for_print->resource_ceil,res_for_print->acquires_pid);
+	struct radix_tree_iter iter;
+	void **slot;
+	int num_dirty = 0;
+	radix_tree_for_each_slot(slot,&resource_idr_pcp,&iter,0){
+		struct resource_pcp *res_for_print = (struct resource_pcp *)radix_tree_deref_slot(slot);
+		if(res_for_print){
+			printk(KERN_INFO "Global Ceil: %d RID: %d Res Ceil: %d Res Acq: %d Wait List:: \n ",global_ceil,res_for_print->rid,res_for_print->resource_ceil,res_for_print->acquires_pid);
 
-		struct rm_entity *entity_for_print;
+			struct rm_entity *entity_for_print;
 
 
-		list_for_each_entry(entity_for_print, &(res_for_print->wait_list), wait_list) {
-			printk(KERN_INFO "		Ent: %d, Prio: %d, Flag: %d \n", entity_for_print->p->pid, entity_for_print->dl_priority,entity_for_print->flags);
+			list_for_each_entry(entity_for_print, &(res_for_print->wait_list), wait_list) {
+				printk(KERN_INFO "		Ent: %d, Prio: %d, Flag: %d \n", entity_for_print->p->pid, entity_for_print->dl_priority,entity_for_print->flags);
+			}
+
 		}
 	}
 
@@ -966,8 +938,6 @@ int pcp_lock_impl( pid_t pid, unsigned int RID)
 	printk(KERN_INFO "PID: %d, RID: %d Got Entity \n" ,pid,RID);
 
 	int do_i_have_a_system_ceil = 0;
-
-//	struct resource_pcp *resource;
 
 	list_for_each_entry(resource, &resource_list_pcp, glob_list) {
 
@@ -1009,7 +979,6 @@ int pcp_lock_impl( pid_t pid, unsigned int RID)
 
 			if (send_sig(SIGSTOP, this_entity->p, 0) < 0) {
 				printk(KERN_ALERT "send_sig SIGSTOP failed for task %d\n", pid);
-				//				return -1;
 			}
 
 			printk(KERN_INFO "PID: %d, RID: %d I wait \n" ,pid,RID);
@@ -1023,7 +992,6 @@ int pcp_lock_impl( pid_t pid, unsigned int RID)
 
 	}else{
 
-//		list_add(&(this_entity->wait_list), &(resource_requested->wait_list));
 
 		struct rm_entity *entity_holding_the_resource;
 
@@ -1051,7 +1019,6 @@ int pcp_lock_impl( pid_t pid, unsigned int RID)
 
 		if (send_sig(SIGSTOP, this_entity->p, 0) < 0) {
 			printk(KERN_ALERT "send_sig SIGSTOP failed for task %d\n", pid);
-			//				return -1;
 		}
 
 
@@ -1091,16 +1058,7 @@ int pcp_lock_impl( pid_t pid, unsigned int RID)
 
 
 	return  0;
-}
 
-
-
-
-
-
-SYSCALL_DEFINE2(pcp_lock, pid_t, pid, unsigned int, RID)
-{
-		return pcp_lock_impl(pid,RID);
 }
 
 
@@ -1162,7 +1120,7 @@ SYSCALL_DEFINE2(pcp_unlock, pid_t, pid, unsigned int, RID){
 
 
 		if(resource->acquires_pid == pid ){
-			entity->dl_priority = min(entity->dl_priority, resource-> resource_ceil);
+//			entity->dl_priority = min(entity->dl_priority, resource-> resource_ceil);
 
 			struct rm_entity *entities_waiting_for_resource;
 
