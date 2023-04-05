@@ -17,6 +17,8 @@
 //#include <linux/sched/prio.h>
 //#include <linux/sched/rt.h>
 
+#include <linux/list_sort.h>
+
 #include <linux/syscalls.h>
 
 
@@ -42,6 +44,9 @@ struct rb_root_cached runnables = RB_ROOT_CACHED;
 static LIST_HEAD(all_processes);
 
 static DEFINE_SPINLOCK(sched_lock);
+
+RADIX_TREE(resource_idr_pcp, GFP_KERNEL);
+
 
 
 struct rm_entity *last_run_by_me = NULL;
@@ -94,6 +99,20 @@ static  bool __rm_less(struct rb_node *a, const struct rb_node *b)
 	return f->dl_priority < s->dl_priority;
 }
 
+
+static int __all_proc_sort(void *priv, const struct list_head *a, const struct list_head *b)
+{
+	const struct rm_entity *entity_a = container_of(a, struct rm_entity, list_nd);
+	const struct rm_entity *entity_b = container_of(b, struct rm_entity, list_nd);
+
+	if (entity_a->dl_priority < entity_b->dl_priority) {
+		return -1;
+	} else if (entity_a->dl_priority > entity_b->dl_priority) {
+		return 1;
+	} else {
+		return 0;
+	}
+}
 
 
 
@@ -201,6 +220,32 @@ void __schedule_rm(void){
 
 
 	// Main Code
+
+	if (list_empty(&all_processes)) {
+
+		printk(KERN_INFO "List is Empty\n");
+
+
+		struct radix_tree_iter iter;
+		void **slot;
+		struct resource_pcp *res;
+		unsigned long index = 0;
+
+		radix_tree_for_each_slot(slot, &resource_idr_pcp, &iter, 0) {
+			res = radix_tree_deref_slot(slot);
+			if (res) {
+					radix_tree_delete(&resource_idr_pcp, iter.index);
+					kfree(res);
+
+			}
+			index = iter.index + 1;
+		}
+
+		printk(KERN_INFO "Cleaned the RADIX Tree\n");
+
+		return;
+
+	}
 
 	if(RB_EMPTY_ROOT(&(runnables.rb_root))){
 		return ;
@@ -470,6 +515,8 @@ bool check_for_dm(pid_t pid, unsigned int deadline, unsigned int period, unsigne
 
 	struct rm_entity* entity_for_interference;
 
+	list_sort(NULL, &all_processes, __all_proc_sort);
+
 	//spin_lock(&sched_lock);
 
 	u64 t = 0;
@@ -569,8 +616,10 @@ SYSCALL_DEFINE4(register_rm, pid_t, pid,unsigned int ,period,unsigned int ,deadl
 
 	int val_to_return = -22;
 
+	int rm_dm_out = rm_dm_implementation(pid,period,deadline,exec_time);
+
 	if(check_for_rm(pid,deadline, period, exec_time)){
-		val_to_return =  rm_dm_implementation(pid,period,deadline,exec_time);
+		val_to_return =  rm_dm_out;
 	}
 
 	return val_to_return;
@@ -586,8 +635,10 @@ SYSCALL_DEFINE4(register_dm, pid_t, pid,unsigned int ,period,unsigned int ,deadl
 
 	int val_to_return = -22;
 
+	int rm_dm_out = rm_dm_implementation(pid,period,deadline,exec_time);
+
 	if(check_for_rm(pid,deadline, period, exec_time)){
-		val_to_return =  rm_dm_implementation(pid,period,deadline,exec_time);
+		val_to_return =  rm_dm_out;
 	}
 
 	return val_to_return;
@@ -658,6 +709,8 @@ SYSCALL_DEFINE1(remove, pid_t, pid)
 	list_for_each_entry(entity, &all_processes, list_nd) {
 		printk(KERN_INFO "List info %d Prio %d %c Flg %d \n", entity->p->pid, entity->dl_priority, task_state_to_char(entity->p),entity->flags);
 	}
+
+
 	list_for_each_entry_safe(entity, tmp, &all_processes, list_nd) {
 		if (entity && entity->p->pid == pid) {
 
@@ -667,7 +720,7 @@ SYSCALL_DEFINE1(remove, pid_t, pid)
 			if(entity->flags == 1)
 				rb_erase_cached(&(entity->rb_nd),&(runnables));
 
-			list_del(&(entity->list_nd));
+//			list_del(&(entity->list_nd));
 
 			entity->flags = 0;
 
@@ -774,7 +827,6 @@ struct resource_pcp {
 
 //LIST_HEAD(process_list_pcp);
 
-RADIX_TREE(resource_idr_pcp, GFP_KERNEL);
 
 
 
@@ -839,7 +891,6 @@ SYSCALL_DEFINE2(resource_map, pid_t, pid, unsigned int, rid){
 
 	struct radix_tree_iter iter;
 	void **slot;
-	int num_dirty = 0;
 	radix_tree_for_each_slot(slot,&resource_idr_pcp,&iter,0){
 		struct resource_pcp *res_for_print = (struct resource_pcp *)radix_tree_deref_slot(slot);
 		if(res_for_print){
@@ -900,7 +951,6 @@ SYSCALL_DEFINE2(pcp_lock, pid_t, pid, unsigned int, RID)
 
 	struct radix_tree_iter iter;
 	void **slot;
-	int num_dirty = 0;
 	radix_tree_for_each_slot(slot,&resource_idr_pcp,&iter,0){
 		struct resource_pcp *res_for_print = (struct resource_pcp *)radix_tree_deref_slot(slot);
 		if(res_for_print){
@@ -918,13 +968,15 @@ SYSCALL_DEFINE2(pcp_lock, pid_t, pid, unsigned int, RID)
 
 
 	u64 proc_prio;
+
 	struct rm_entity *entity;
 	struct rm_entity *this_entity;
 
-	struct resource_pcp *resource;
+//	struct resource_pcp *resource;
 	struct resource_pcp *resource_requested;
 
 	list_for_each_entry(entity, &all_processes, list_nd) {
+		printk(KERN_INFO "PID: %d, RID: %d Got This Entity \n" ,entity->p->pid,RID);
 		if(entity->p->pid == pid){
 			this_entity = entity;
 
@@ -934,12 +986,15 @@ SYSCALL_DEFINE2(pcp_lock, pid_t, pid, unsigned int, RID)
 		}
 	}
 
-//	printk(KERN_INFO "PID: %d, RID: %d \n" ,pid,RID);
+	printk(KERN_INFO "PID: %d, RID: %d \n" ,this_entity->p->pid,RID);
 	printk(KERN_INFO "PID: %d, RID: %d Got Entity \n" ,pid,RID);
 
 	int do_i_have_a_system_ceil = 0;
 
-	list_for_each_entry(resource, &resource_list_pcp, glob_list) {
+//	list_for_each_entry(resource, &resource_list_pcp, glob_list) {
+
+	radix_tree_for_each_slot(slot,&resource_idr_pcp,&iter,0){
+		struct resource_pcp *resource = (struct resource_pcp *)radix_tree_deref_slot(slot);
 
 		if(resource->acquires_pid == pid && resource->resource_ceil == global_ceil ){
 			do_i_have_a_system_ceil = 1;
@@ -1027,7 +1082,10 @@ SYSCALL_DEFINE2(pcp_lock, pid_t, pid, unsigned int, RID)
 
 	global_ceil = MAX_GLOB_CEIL;
 
-	list_for_each_entry(resource, &resource_list_pcp, glob_list) {
+//	list_for_each_entry(resource, &resource_list_pcp, glob_list) {
+
+	radix_tree_for_each_slot(slot,&resource_idr_pcp,&iter,0){
+		struct resource_pcp *resource = (struct resource_pcp *)radix_tree_deref_slot(slot);
 
 		if(resource->acquires_pid != -1){
 			global_ceil = min(global_ceil, resource->resource_ceil);
@@ -1039,8 +1097,10 @@ SYSCALL_DEFINE2(pcp_lock, pid_t, pid, unsigned int, RID)
 
 	printk(KERN_INFO "Done with Lock");
 
-	list_for_each_entry(res_for_print, &resource_list_pcp, glob_list) {
+//	list_for_each_entry(res_for_print, &resource_list_pcp, glob_list) {
 
+	radix_tree_for_each_slot(slot,&resource_idr_pcp,&iter,0){
+		struct resource_pcp *res_for_print = (struct resource_pcp *)radix_tree_deref_slot(slot);
 		printk(KERN_INFO "Global Ceil: %d RID: %d Res Ceil: %d Res Acq: %d Wait List:: \n ",global_ceil,res_for_print->rid,res_for_print->resource_ceil,res_for_print->acquires_pid);
 
 		struct rm_entity *entity_for_print;
@@ -1069,12 +1129,18 @@ SYSCALL_DEFINE2(pcp_unlock, pid_t, pid, unsigned int, RID){
 
 	printk(KERN_INFO "Called Unlock %d on %d", pid, RID);
 
-	struct resource_pcp *res_for_print;
+//	struct resource_pcp *res_for_print;
 
 	spin_lock(&sched_lock);
 
 
-	list_for_each_entry(res_for_print, &resource_list_pcp, glob_list) {
+//	list_for_each_entry(res_for_print, &resource_list_pcp, glob_list) {
+
+
+	struct radix_tree_iter iter;
+	void **slot;
+	radix_tree_for_each_slot(slot,&resource_idr_pcp,&iter,0){
+		struct resource_pcp *res_for_print = (struct resource_pcp *)radix_tree_deref_slot(slot);
 
 		printk(KERN_INFO "Global Ceil: %d RID: %d Res Ceil: %d Res Acq: %d Wait List:: \n ",global_ceil,res_for_print->rid,res_for_print->resource_ceil,res_for_print->acquires_pid);
 
@@ -1089,7 +1155,7 @@ SYSCALL_DEFINE2(pcp_unlock, pid_t, pid, unsigned int, RID){
 	global_ceil =MAX_GLOB_CEIL;
 
 	struct rm_entity *entity;
-	struct resource_pcp *resource;
+//	struct resource_pcp *resource;
 
 
 	list_for_each_entry(entity, &all_processes, list_nd) {
@@ -1106,7 +1172,11 @@ SYSCALL_DEFINE2(pcp_unlock, pid_t, pid, unsigned int, RID){
 
 
 
-	list_for_each_entry(resource, &resource_list_pcp, glob_list) {
+//	list_for_each_entry(resource, &resource_list_pcp, glob_list) {
+
+	radix_tree_for_each_slot(slot,&resource_idr_pcp,&iter,0){
+		struct resource_pcp *resource = (struct resource_pcp *)radix_tree_deref_slot(slot);
+
 
 		if(resource->rid == RID){
 			resource->acquires_pid = -1;
@@ -1142,7 +1212,10 @@ SYSCALL_DEFINE2(pcp_unlock, pid_t, pid, unsigned int, RID){
 
 	printk(KERN_INFO "PID: %d, RID: %d Global Ceiling and Process Priority set \n" ,pid,RID);
 
-	list_for_each_entry(res_for_print, &resource_list_pcp, glob_list) {
+//	list_for_each_entry(res_for_print, &resource_list_pcp, glob_list) {
+
+	radix_tree_for_each_slot(slot,&resource_idr_pcp,&iter,0){
+		struct resource_pcp *res_for_print = (struct resource_pcp *)radix_tree_deref_slot(slot);
 
 		printk(KERN_INFO "Global Ceil: %d RID: %d Res Ceil: %d Res Acq: %d Wait List:: \n ",global_ceil,res_for_print->rid,res_for_print->resource_ceil,res_for_print->acquires_pid);
 
@@ -1158,7 +1231,12 @@ SYSCALL_DEFINE2(pcp_unlock, pid_t, pid, unsigned int, RID){
 
 
 
-	list_for_each_entry(resource, &resource_list_pcp, glob_list) {
+//	list_for_each_entry(resource, &resource_list_pcp, glob_list) {
+
+
+	radix_tree_for_each_slot(slot,&resource_idr_pcp,&iter,0){
+		struct resource_pcp *resource = (struct resource_pcp *)radix_tree_deref_slot(slot);
+
 
 		if(resource -> acquires_pid == -1){
 
@@ -1181,13 +1259,18 @@ SYSCALL_DEFINE2(pcp_unlock, pid_t, pid, unsigned int, RID){
 			if(min_entity_waiting){
 
 
-				struct resource_pcp *resource_to_check_ceil;
+//				struct resource_pcp *resource_to_check_ceil;
 
 				int am_i_system_ceil = 0;
 
 				u64 min_entity_waiting_holding_system_ceil = min_entity_waiting->dl_priority;
 
-				list_for_each_entry(resource_to_check_ceil, &resource_list_pcp, glob_list) {
+//				list_for_each_entry(resource_to_check_ceil, &resource_list_pcp, glob_list) {
+
+				struct radix_tree_iter iter_c;
+				void **slot_c;
+				radix_tree_for_each_slot(slot_c,&resource_idr_pcp,&iter_c,0){
+					struct resource_pcp *resource_to_check_ceil = (struct resource_pcp *)radix_tree_deref_slot(slot);
 
 					if(resource_to_check_ceil->acquires_pid == min_entity_waiting->p->pid &&  resource_to_check_ceil->resource_ceil == global_ceil){
 
@@ -1228,7 +1311,12 @@ SYSCALL_DEFINE2(pcp_unlock, pid_t, pid, unsigned int, RID){
 
 
 	printk(KERN_INFO "Done with Unlock");
-	list_for_each_entry(res_for_print, &resource_list_pcp, glob_list) {
+//	list_for_each_entry(res_for_print, &resource_list_pcp, glob_list) {
+
+
+	radix_tree_for_each_slot(slot,&resource_idr_pcp,&iter,0){
+		struct resource_pcp *res_for_print = (struct resource_pcp *)radix_tree_deref_slot(slot);
+
 
 		printk(KERN_INFO "Global Ceil: %d RID: %d Res Ceil: %d Res Acq: %d Wait List:: \n ",global_ceil,res_for_print->rid,res_for_print->resource_ceil,res_for_print->acquires_pid);
 
