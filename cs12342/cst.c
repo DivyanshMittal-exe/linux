@@ -47,6 +47,7 @@ static DEFINE_SPINLOCK(sched_lock);
 
 RADIX_TREE(resource_idr_pcp, GFP_KERNEL);
 
+struct pid_namespace *ns = &init_pid_ns;
 
 
 struct rm_entity *last_run_by_me = NULL;
@@ -406,7 +407,7 @@ int rm_dm_implementation( pid_t pid,unsigned int  period,unsigned int  deadline,
 		return -ENOMEM;
 	}
 
-	struct task_struct *task = find_get_task_by_vpid (pid);
+	struct task_struct *task = find_task_by_pid_ns(pid, ns);
 
 	rm_of_task->p = task;
 	rm_of_task->dl_runtime = exec_time;
