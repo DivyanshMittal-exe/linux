@@ -1,4 +1,4 @@
-obj-m = signal_module.o
+obj-m = driver.o
 
 PID := 2752
 
