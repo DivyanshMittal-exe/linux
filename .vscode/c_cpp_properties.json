@@ -1,0 +1,15 @@
+{
+    "configurations": [
+        {
+            "name": "Linux",
+            "includePath": [
+                "~/Codes/Sem 6/COL331/Sync A1/linux/include",
+                "~/Codes/Sem 6/COL331/Sync A1/linux/arch/x86/include"
+            ],
+            "intelliSenseMode": "linux-gcc-x64",
+            "cStandard": "c17",
+            "cppStandard": "gnu++17"
+        }
+    ],
+    "version": 4
+}

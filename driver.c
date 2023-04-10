@@ -9,174 +9,190 @@
 #include <linux/sched.h>
 #include <linux/list.h>
 #include <linux/spinlock.h>
+#include <linux/fs.h>
 
-#define procfs_name "sig_target"
-#define INTERVAL 1000
 
-static struct timer_list sig_timer;
+#define NO_OF_DEVICES 4
 
-struct sig_struct
+#define BUFFERSIZE (1 << 16)
+
+#define FILENAME ""
+
+struct semaphore lck;            
+wait_queue_head_t waiting_readers;
+
+
+
+char* temp_buffer;
+struct file *main_file = NULL;
+loff_t main_file_offset = 0;
+
+
+dev_t LIFO_char_dev;
+
+static struct cdev* LIFO_devices = NULL;
+
+
+
+static ssize_t LIFO_reader (struct file *filp, char __user *buf, size_t count,
+                loff_t *f_pos)
 {
-    pid_t pid;
-    unsigned long int sig;
-    struct list_head next_prev_list;
-};
 
-// static struct sig_struct sig_stack[max_req_possible];
 
-static LIST_HEAD(sig_list_head);
+    if (down_interruptible(&lck))
+		return -ERESTARTSYS;
 
-static struct proc_dir_entry *sig_proc_file;
 
-static DEFINE_SPINLOCK(sig_list_lock);
 
-ssize_t sig_proc_write_handler(struct file *file, const char __user *buf, size_t count, loff_t *ppos)
-{
+    // No data blocking
 
-    //    char data[count + 1];
-    char *data;
-    int i;
-    int f_part = 0;
-    int kstrtoint_ret;
-    pid_t pid;
-    unsigned int sig_to_call;
-    struct sig_struct *t;
+    while (main_file_offset == 0) { 
 
-    data = kmalloc(count + 1, GFP_KERNEL);
-    if (!data)
-    {
-        printk(KERN_ALERT "Data not allocated: %lu \n", count + 1);
-        return -ENOMEM;
-    }
+		up(&lck); 
 
-    if (copy_from_user(data, buf, count))
-    {
-        printk(KERN_ALERT "Data not copied\n");
-        kfree(data);
-        return -EFAULT;
-    }
 
-    for (i = 0; i < count; i++)
-    {
-        if (data[i] == ',')
-        {
-            data[i] = '\0';
-            break;
-        }
-        ++f_part;
-    }
-    data[count] = '\0';
+	
+		if (wait_event_interruptible(waiting_readers, (main_file_offset != 0)))
+			return -ERESTARTSYS;
+            
 
-    printk(KERN_ALERT "Data is %s\n", data);
+		if (down_interruptible(&lck))
+			return -ERESTARTSYS;
+	}
 
-    // #10 is base here
-    kstrtoint_ret = kstrtoint(data, 10, (int *)&pid);
-    if (kstrtoint_ret)
-    {
-        printk(KERN_ALERT "Data not converted to pid \n");
-        kfree(data);
-        return kstrtoint_ret;
-    }
 
-    // #10 is base here
-    kstrtoint_ret = kstrtouint(&data[f_part + 2], 10, &sig_to_call);
-    if (kstrtoint_ret)
-    {
-        printk(KERN_ALERT "Data not converted to signal\n");
-        kfree(data);
-        return kstrtoint_ret;
-    }
 
-    t = kmalloc(sizeof(struct sig_struct), GFP_KERNEL);
-    if (!t)
-    {
-        return -ENOMEM;
-    }
 
-    t->pid = pid;
-    t->sig = sig_to_call;
 
-    spin_lock(&sig_list_lock);
-
-    list_add(&t->next_prev_list, &sig_list_head);
-
-    printk(KERN_INFO "Placed in the list (%d,%ld)\n", t->pid, t->sig);
-
-    spin_unlock(&sig_list_lock);
-
-    return count;
 }
 
-static const struct proc_ops sig_proc_ops = {
+
+ssize_t	LIFO_writer(struct file *file, const char __user *buf, size_t count, loff_t *ppos){
+
+    struct lifo_pipe *lifo_obj = filp->private_data;
+
+    int offset = 0;
+
+    ssize_t retval = count;
+
+    printk(KERN_INFO "Started Writing \n");
+
+    if (down_interruptible(&lck))
+		    return -ERESTARTSYS;
+
+    do{
+
+        
+        
+        if (copy_from_user(temp_buffer, buf + offset, min(count,BUFFERSIZE )) != 0)
+        {
+            	up (&lck);
+		        return -EFAULT;
+        }
+
+        printk(KERN_INFO "%s\n", temp_buffer);
+        
+        int  retval = vfs_write(main_file, temp_buffer ,  min(count,BUFFERSIZE ), &main_file_offset);
+
+
+        offset += BUFFERSIZE;
+        count -= BUFFERSIZE;
+
+
+    }while(count > 0);
+
+    up (&lck);
+
+    wake_up_interruptible(&waiting_readers);
+
+
+    return retval;
+
+
+}
+
+
+
+
+
+static const struct proc_ops LIFO_proc_ops = {
+    .owner = THIS_MODULE,
     .proc_write = sig_proc_write_handler,
 };
 
-void actual_signal_handlers(struct timer_list *t_l)
-{
-
-    struct task_struct *task;
-    struct sig_struct *pn, *next;
-
-    spin_lock(&sig_list_lock);
-
-    list_for_each_entry_safe(pn, next, &sig_list_head, next_prev_list)
-    {
-
-        // printk(KERN_INFO "Sent %d the sig %lu\n", pn->pid, pn->sig);
-
-        task = pid_task(find_vpid(pn->pid), PIDTYPE_PID);
-        if (!task)
-        {
-            printk(KERN_INFO "This PID does not exist : %d!\n", pn->pid);
-        }
-        else
-        {
-            send_sig(pn->sig, task, 0);
-            printk(KERN_INFO "Sent %d the sig %lu\n", pn->pid, pn->sig);
-        }
-
-        list_del(&pn->next_prev_list);
-        kfree(pn);
-    }
-
-    spin_unlock(&sig_list_lock);
-
-    mod_timer(&sig_timer, jiffies + msecs_to_jiffies(INTERVAL));
-}
 
 static int __init sig_init(void)
 {
-    //                                                 All have write permssions
-    sig_proc_file = proc_create(procfs_name, 0666, NULL, &sig_proc_ops);
 
-    if (!sig_proc_file)
+    if (alloc_chrdev_region(&LIFO_char_dev, 0, NO_OF_DEVICES, "LIFO_CHAR_DEVICE") < 0)
     {
-        printk(KERN_ALERT "Error: Could not initialize /proc/%s\n", procfs_name);
+        printk(KERN_ALERT "Unable to allocate major-minor number\n");
+        return -1;
+    }
+
+    LIFO_devices = kmalloc(NO_OF_DEVICES * sizeof(struct cdev), GFP_KERNEL);
+    
+    if (LIFO_devices == NULL) {
+		unregister_chrdev_region(LIFO_char_dev, NO_OF_DEVICES);
+		return -1;
+	}
+
+
+    for (size_t i = 0; i < NO_OF_DEVICES; i++)
+    {
+        cdev_init(LIFO_devices + i, &LIFO_proc_ops);
+        LIFO_devices->owner = THIS_MODULE;
+
+        if (cdev_add(LIFO_devices + i, LIFO_char_dev + i, 1) < 0)
+        {
+            printk(KERN_ALERT "Device not added");
+            unregister_chrdev_region(LIFO_char_dev + i, 1);
+            return -1;
+        }
+    }
+    
+
+
+
+    init_waitqueue_head(&waiting_readers);
+	init_MUTEX(&lck);
+
+
+
+
+
+    // main_file = kmalloc(sizeof(struct file), GFP_KERNEL);
+    // if (!main_file) {
+    //     printk(KERN_ALERT "Data not allocated for sturct file main_file: %lu \n", sizeof(struct file));
+    //     return -ENOMEM;
+    // }
+
+
+    main_file = filp_open(FILENAME, O_CREAT | O_WRONLY | O_TRUNC, 0600);
+
+    temp_buffer = kmalloc(BUFFERSIZE + 1, GFP_KERNEL);
+    
+    if (!temp_buffer) {
+        printk(KERN_ALERT "Data not allocated for temp_buffer: %lu \n", BUFFERSIZE);
         return -ENOMEM;
     }
 
-    printk(KERN_INFO "/proc/%s created\n", procfs_name);
+    // Added so that I can easily printk these chunks;
+    temp_buffer[BUFFERSIZE] = '\0';
 
-    sig_timer.expires = jiffies + msecs_to_jiffies(INTERVAL);
-    sig_timer.function = actual_signal_handlers;
-    add_timer(&sig_timer);
+    printk(KERN_INFO "Lifo device added, major number given is %d\n",MAJOR(LIFO_char_dev));
+
 
     return 0;
 }
 
 static void __exit sig_exit(void)
 {
-    struct sig_struct *pn, *next;
+    cdev_del(&LIFO_char_cdev);
+    unregister_chrdev_region(LIFO_char_dev, NO_OF_DEVICES);
 
-    del_timer(&sig_timer);
-    remove_proc_entry(procfs_name, NULL);
-    printk(KERN_INFO "/proc/%s removed\n", procfs_name);
 
-    list_for_each_entry_safe(pn, next, &sig_list_head, next_prev_list)
-    {
-        list_del(&pn->next_prev_list);
-        kfree(pn);
-    }
+    printk(KERN_INFO "Lifo Device says bye world!\n");
 }
 
 module_init(sig_init);
