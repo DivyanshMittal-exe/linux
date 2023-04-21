@@ -18,9 +18,12 @@
 
 #define FILENAME ""
 
+#define READER 2
+
+#define WRITER 3
+
 struct semaphore lck;            
 wait_queue_head_t waiting_readers;
-
 
 
 char* temp_buffer;
@@ -28,48 +31,119 @@ struct file *main_file = NULL;
 loff_t main_file_offset = 0;
 
 
+struct LIFO_pipe {
+        int my_type;
+        struct cdev cdev;                  /* Char device structure */
+};
+
+
 dev_t LIFO_char_dev;
 
-static struct cdev* LIFO_devices = NULL;
+static struct LIFO_pipe* LIFO_devices;
 
 
 
-static ssize_t LIFO_reader (struct file *filp, char __user *buf, size_t count,
-                loff_t *f_pos)
+
+static int LIFO_open(struct inode *inode, struct file *filp)
 {
+	struct LIFO_pipe *lif_dev;
 
+	lif_dev = container_of(inode->i_cdev, struct LIFO_pipe, cdev);
+	filp->private_data = lif_dev;
 
-    if (down_interruptible(&lck))
+	if (down_interruptible(&lck))
 		return -ERESTARTSYS;
 
 
 
-    // No data blocking
 
-    while (main_file_offset == 0) { 
+	if (filp->f_mode & FMODE_READ){
+        my_type = READER;
+    }else if(filp->f_mode & FMODE_WRITE){
+        my_type = WRITER;
+    }
 
-		up(&lck); 
 
+	up(&lck);
 
-	
-		if (wait_event_interruptible(waiting_readers, (main_file_offset != 0)))
-			return -ERESTARTSYS;
-            
-
-		if (down_interruptible(&lck))
-			return -ERESTARTSYS;
-	}
+	return nonseekable_open(inode, filp);
+}
 
 
 
 
+
+
+
+
+static ssize_t LIFO_reader (struct file *filp, char __user *buf, size_t count,
+                loff_t *f_pos) 
+{
+
+    int retval;
+
+
+    char *buffer = kmalloc(count, GFP_KERNEL);
+    if (!buffer) {
+    
+    }
+
+    int buffer_offset = 0;
+
+
+    size_t count_copy = count;
+
+    while(count){
+        if (down_interruptible(&lck))
+		    return -ERESTARTSYS;
+
+
+        while (main_file_offset == 0) { 
+
+            up(&lck); 
+
+        
+            if (wait_event_interruptible(waiting_readers, (main_file_offset != 0)))
+                return -ERESTARTSYS;
+                
+
+            if (down_interruptible(&lck))
+                return -ERESTARTSYS;
+        }
+
+        int gonna_read =  min(count, main_file_offset);
+
+        retval = vfs_read(main_file, buffer + buffer_offset, gonna_read , &main_file_offset);
+        
+        count -= gonna_read;
+        buffer_offset += gonna_read;
+
+
+         up(&lck);
+
+    }
+
+    for(int i = 0; i < count_copy/2; i++){
+        char temp1 = buffer[i];
+        char temp2 = buffer[count_copy - 1 - i];
+        buffer[i] = temp2;
+        buffer[count_copy - 1 - i] = temp1;
+    }int
+
+    if (copy_to_user(buf, buffer, retval)) {
+        return -EFAULT;
+    }
+
+    kfree(buffer);
+
+    return count_copy;
 
 }
 
 
 ssize_t	LIFO_writer(struct file *file, const char __user *buf, size_t count, loff_t *ppos){
 
-    struct lifo_pipe *lifo_obj = filp->private_data;
+    struct LIFO_pipe *lifo_obj = filp->private_data;
 
     int offset = 0;
 
@@ -130,7 +204,7 @@ static int __init sig_init(void)
         return -1;
     }
 
-    LIFO_devices = kmalloc(NO_OF_DEVICES * sizeof(struct cdev), GFP_KERNEL);
+    LIFO_devices = kmalloc(NO_OF_DEVICES * sizeof(struct LIFO_pipe), GFP_KERNEL);
     
     if (LIFO_devices == NULL) {
 		unregister_chrdev_region(LIFO_char_dev, NO_OF_DEVICES);
@@ -141,9 +215,9 @@ static int __init sig_init(void)
     for (size_t i = 0; i < NO_OF_DEVICES; i++)
     {
         cdev_init(LIFO_devices + i, &LIFO_proc_ops);
-        LIFO_devices->owner = THIS_MODULE;
+        (LIFO_devices + i)->cdev.owner = THIS_MODULE;
 
-        if (cdev_add(LIFO_devices + i, LIFO_char_dev + i, 1) < 0)
+        if (cdev_add(&((LIFO_devices + i)->cdev), LIFO_char_dev + i, 1) < 0)
         {
             printk(KERN_ALERT "Device not added");
             unregister_chrdev_region(LIFO_char_dev + i, 1);
