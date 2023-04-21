@@ -128,7 +128,9 @@ static ssize_t LIFO_reader (struct file *filp, char __user *buf, size_t count,
         char temp2 = buffer[count_copy - 1 - i];
         buffer[i] = temp2;
         buffer[count_copy - 1 - i] = temp1;
-    }int
+    }
+
+
 
     if (copy_to_user(buf, buffer, retval)) {
         return -EFAULT;
