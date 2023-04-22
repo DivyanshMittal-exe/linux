@@ -11,18 +11,43 @@
 #include <linux/spinlock.h>
 #include <linux/fs.h>
 
+#include <linux/module.h>
+#include <linux/moduleparam.h>
+
+#include <linux/kernel.h>	/* printk(), MIN() */
+#include <linux/slab.h>		/* kmalloc() */
+#include <linux/fs.h>		/* everything... */
+#include <linux/proc_fs.h>
+#include <linux/errno.h>	/* error codes */
+#include <linux/types.h>	/* size_t */
+#include <linux/fcntl.h>
+#include <linux/poll.h>
+#include <linux/cdev.h>
+#include <linux/sched.h>
+#include <asm/uaccess.h>
+
+#include <asm/segment.h>
+#include <asm/uaccess.h>
+#include <linux/buffer_head.h>
+
+#include<linux/mutex.h>
 
 #define NO_OF_DEVICES 4
 
-#define BUFFERSIZE (1 << 16)
+#define BUFFERSIZE (12)
 
-#define FILENAME ""
+#define FILENAME "/tmp/driver_rw_storage"
 
 #define READER 2
 
 #define WRITER 3
 
-struct semaphore lck;            
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+
+
+// struct semaphore lck;   
+static struct mutex lck;
+
 wait_queue_head_t waiting_readers;
 
 
@@ -30,10 +55,12 @@ char* temp_buffer;
 struct file *main_file = NULL;
 loff_t main_file_offset = 0;
 
+static struct class *LIFO_class = NULL;
+
 
 struct LIFO_pipe {
         int my_type;
-        struct cdev cdev;                  /* Char device structure */
+        struct cdev char_dev;                  /* Char device structure */
 };
 
 
@@ -48,23 +75,22 @@ static int LIFO_open(struct inode *inode, struct file *filp)
 {
 	struct LIFO_pipe *lif_dev;
 
-	lif_dev = container_of(inode->i_cdev, struct LIFO_pipe, cdev);
+	lif_dev = container_of(inode->i_cdev, struct LIFO_pipe, char_dev);
 	filp->private_data = lif_dev;
 
-	if (down_interruptible(&lck))
-		return -ERESTARTSYS;
 
+    mutex_lock(&lck);
 
 
 
 	if (filp->f_mode & FMODE_READ){
-        my_type = READER;
+        lif_dev->my_type = READER;
     }else if(filp->f_mode & FMODE_WRITE){
-        my_type = WRITER;
+        lif_dev->my_type = WRITER;
     }
 
 
-	up(&lck);
+	mutex_unlock(&lck);
 
 	return nonseekable_open(inode, filp);
 }
@@ -81,45 +107,62 @@ static ssize_t LIFO_reader (struct file *filp, char __user *buf, size_t count,
 {
 
     int retval;
-
+    int buffer_offset ;
+    size_t count_copy ;
+    int gonna_read ;
 
     char *buffer = kmalloc(count, GFP_KERNEL);
     if (!buffer) {
     
     }
 
-    int buffer_offset = 0;
+    buffer_offset = 0;
 
 
-    size_t count_copy = count;
+    count_copy = count;
 
     while(count){
-        if (down_interruptible(&lck))
-		    return -ERESTARTSYS;
+        
+        printk(KERN_INFO "LIFO_reader: acquiring mutex lock\n");
+
+        mutex_lock(&lck);
+        
 
 
         while (main_file_offset == 0) { 
-
-            up(&lck); 
+            printk(KERN_INFO "LIFO_reader: released, nothing to read lock\n");
+            mutex_unlock(&lck);
 
         
             if (wait_event_interruptible(waiting_readers, (main_file_offset != 0)))
                 return -ERESTARTSYS;
                 
 
-            if (down_interruptible(&lck))
-                return -ERESTARTSYS;
+            mutex_lock(&lck);
         }
 
-        int gonna_read =  min(count, main_file_offset);
+        gonna_read =  MIN(count, main_file_offset);
+                printk(KERN_INFO "LIFO_reader: gonna_read = %d\n", gonna_read);
 
-        retval = vfs_read(main_file, buffer + buffer_offset, gonna_read , &main_file_offset);
+        main_file_offset-= gonna_read;
+        printk(KERN_INFO "LIFO_reader: main_file_offset updated to %lld\n", main_file_offset);
+
+        retval = kernel_read(main_file, buffer + buffer_offset, gonna_read , &main_file_offset);
         
+        printk(KERN_INFO "LIFO_reader: main_file_offset after reading to %lld\n", main_file_offset);
+        printk(KERN_INFO "LIFO_reader: buffer_offset is %d\n", buffer_offset);
+        printk(KERN_INFO "LIFO_reader: buffer stats is %s\n", buffer);
+
+        main_file_offset-= gonna_read;
+        printk(KERN_INFO "LIFO_reader: kernel_read returned %d bytes\n", retval);
+
+
+
         count -= gonna_read;
         buffer_offset += gonna_read;
 
-
-         up(&lck);
+        printk(KERN_INFO "LIFO_reader: releasing mutex lock\n");
+        mutex_unlock(&lck);
 
     }
 
@@ -143,32 +186,41 @@ static ssize_t LIFO_reader (struct file *filp, char __user *buf, size_t count,
 }
 
 
-ssize_t	LIFO_writer(struct file *file, const char __user *buf, size_t count, loff_t *ppos){
+ssize_t	LIFO_writer(struct file *filp, const char __user *buf, size_t count, loff_t *ppos){
 
-    struct LIFO_pipe *lifo_obj = filp->private_data;
+    struct LIFO_pipe *lifo_obj;
+    int offset ;
+    ssize_t retval;
 
-    int offset = 0;
 
-    ssize_t retval = count;
+    lifo_obj = filp->private_data;
 
-    printk(KERN_INFO "Started Writing \n");
+    offset = 0;
+     retval = count;
 
-    if (down_interruptible(&lck))
-		    return -ERESTARTSYS;
+
+    printk(KERN_INFO "LIFO_writer: Started Writing \n");
+
+    mutex_lock(&lck);
 
     do{
 
         
         
-        if (copy_from_user(temp_buffer, buf + offset, min(count,BUFFERSIZE )) != 0)
+        if (copy_from_user(temp_buffer, buf + offset, MIN(count,BUFFERSIZE )) != 0)
         {
-            	up (&lck);
+            	mutex_unlock(&lck);
 		        return -EFAULT;
         }
 
-        printk(KERN_INFO "%s\n", temp_buffer);
+        printk(KERN_INFO "LIFO_writer: Copied from user space: %s\n", temp_buffer);
+
+        printk(KERN_INFO "LIFO_writer: %s\n", temp_buffer);
         
-        int  retval = vfs_write(main_file, temp_buffer ,  min(count,BUFFERSIZE ), &main_file_offset);
+        retval = kernel_write(main_file, temp_buffer ,  MIN(count,BUFFERSIZE ), &main_file_offset);
+        printk(KERN_INFO "LIFO_writer: Written to main file: %zd\n", retval);
+
+        printk(KERN_INFO "LIFO_writer: main_file_offset after writing to %lld\n", main_file_offset);
 
 
         offset += BUFFERSIZE;
@@ -177,13 +229,14 @@ ssize_t	LIFO_writer(struct file *file, const char __user *buf, size_t count, lof
 
     }while(count > 0);
 
-    up (&lck);
+    mutex_unlock(&lck);
 
     wake_up_interruptible(&waiting_readers);
 
+    printk(KERN_INFO "Exiting LIFO_writer\n");
+
 
     return retval;
-
 
 }
 
@@ -191,18 +244,20 @@ ssize_t	LIFO_writer(struct file *file, const char __user *buf, size_t count, lof
 
 
 
-static const struct proc_ops LIFO_proc_ops = {
+struct file_operations LIFO_proc_ops = {
     .owner = THIS_MODULE,
-    .proc_write = sig_proc_write_handler,
+	.read =		LIFO_reader,
+	.write =	LIFO_writer,
+	.open =		LIFO_open,
 };
 
 
-static int __init sig_init(void)
+static int __init LIFO_init(void)
 {
 
     if (alloc_chrdev_region(&LIFO_char_dev, 0, NO_OF_DEVICES, "LIFO_CHAR_DEVICE") < 0)
     {
-        printk(KERN_ALERT "Unable to allocate major-minor number\n");
+        printk(KERN_ALERT "Unable to allocate major-MINor number\n");
         return -1;
     }
 
@@ -213,43 +268,46 @@ static int __init sig_init(void)
 		return -1;
 	}
 
+    LIFO_class = class_create(THIS_MODULE, "LIFO_CHAR_DEVICE");
+
 
     for (size_t i = 0; i < NO_OF_DEVICES; i++)
     {
-        cdev_init(LIFO_devices + i, &LIFO_proc_ops);
-        (LIFO_devices + i)->cdev.owner = THIS_MODULE;
+        cdev_init(&(LIFO_devices + i)->char_dev, &LIFO_proc_ops);
+        (LIFO_devices + i)->char_dev.owner = THIS_MODULE;
 
-        if (cdev_add(&((LIFO_devices + i)->cdev), LIFO_char_dev + i, 1) < 0)
+        if (cdev_add(&((LIFO_devices + i)->char_dev), LIFO_char_dev + i, 1) < 0)
         {
             printk(KERN_ALERT "Device not added");
             unregister_chrdev_region(LIFO_char_dev + i, 1);
             return -1;
         }
+
+        device_create(LIFO_class, NULL, MKDEV(MAJOR(LIFO_char_dev), i), NULL, "LIFO_CHAR_DEVICE%ld", i);
+
     }
+
+
     
 
 
 
     init_waitqueue_head(&waiting_readers);
-	init_MUTEX(&lck);
+	mutex_init(&lck);
 
 
 
+    main_file = filp_open(FILENAME, O_CREAT | O_RDWR , 0666);
 
-
-    // main_file = kmalloc(sizeof(struct file), GFP_KERNEL);
-    // if (!main_file) {
-    //     printk(KERN_ALERT "Data not allocated for sturct file main_file: %lu \n", sizeof(struct file));
-    //     return -ENOMEM;
-    // }
-
-
-    main_file = filp_open(FILENAME, O_CREAT | O_WRONLY | O_TRUNC, 0600);
+    if (IS_ERR(main_file)) {
+        printk(KERN_ALERT "Failed to open file %s: %ld\n", FILENAME, PTR_ERR(main_file));
+        return -1;
+    }
 
     temp_buffer = kmalloc(BUFFERSIZE + 1, GFP_KERNEL);
     
     if (!temp_buffer) {
-        printk(KERN_ALERT "Data not allocated for temp_buffer: %lu \n", BUFFERSIZE);
+        printk(KERN_ALERT "Data not allocated for temp_buffer: %d \n", BUFFERSIZE);
         return -ENOMEM;
     }
 
@@ -262,17 +320,30 @@ static int __init sig_init(void)
     return 0;
 }
 
-static void __exit sig_exit(void)
+static void __exit LIFO_exit(void)
 {
-    cdev_del(&LIFO_char_cdev);
+
+    main_file_offset = 0;
+
+    for (size_t i = 0; i < NO_OF_DEVICES; i++)
+    {
+        cdev_del(&(LIFO_devices + i)->char_dev);
+        device_destroy(LIFO_class, MKDEV(MAJOR(LIFO_char_dev), i));
+
+    }
     unregister_chrdev_region(LIFO_char_dev, NO_OF_DEVICES);
+
+
+    // class_unregister(LIFO_class);
+    class_destroy(LIFO_class);
+
 
 
     printk(KERN_INFO "Lifo Device says bye world!\n");
 }
 
-module_init(sig_init);
-module_exit(sig_exit);
+module_init(LIFO_init);
+module_exit(LIFO_exit);
 
 MODULE_AUTHOR("Divyansh Mittal");
 MODULE_LICENSE("GPL");

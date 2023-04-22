@@ -1,5 +1,13 @@
 {
     "C_Cpp.errorSquiggles": "Enabled",
     "C_Cpp.intelliSenseEngine": "Tag Parser",
-    "C_Cpp.loggingLevel": "Information"
+    "C_Cpp.loggingLevel": "Information",
+    "files.associations": {
+        "*.html": "html",
+        "segment.h": "c",
+        "array": "cpp",
+        "string_view": "cpp",
+        "initializer_list": "cpp",
+        "utility": "cpp"
+    }
 }

@@ -3,10 +3,18 @@ obj-m = driver.o
 PID := 2752
 
 KVERSION = $(shell uname -r)
+KDIR := /lib/modules/$(shell uname -r)/build
+
+
 all:
-	make -C /lib/modules/$(KVERSION)/build M=$(PWD) modules
+	make -C $(KDIR) /lib/modules/$(KVERSION)/build M=$(PWD) modules
 clean:
 	make -C /lib/modules/$(KVERSION)/build M=$(PWD) clean
 
-test:
-	echo "$(PID), 19" > /proc/sig_target; echo "$(PID), 18" > /proc/sig_target;
+
+
+test: tester.cpp
+	g++ -Wall -Wextra -std=c++17 -pthread tester.cpp -o test
+
+test_run: test
+	./test
