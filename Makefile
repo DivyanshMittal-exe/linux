@@ -11,6 +11,12 @@ all:
 clean:
 	make -C /lib/modules/$(KVERSION)/build M=$(PWD) clean
 
+eve:
+	sudo rmmod driver
+	make -C $(KDIR) /lib/modules/$(KVERSION)/build M=$(PWD) modules
+	sudo insmod driver.ko
+	g++ -Wall -Wextra -std=c++17 -pthread tester.cpp -o test
+	sudo ./test
 
 
 test: tester.cpp

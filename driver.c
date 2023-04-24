@@ -55,6 +55,8 @@ wait_queue_head_t waiting_readers;
 struct file *main_file = NULL;
 loff_t main_file_offset = 0;
 
+char* temp_buffer;
+
 static struct class *LIFO_class = NULL;
 
 
@@ -111,11 +113,40 @@ static ssize_t LIFO_reader (struct file *filp, char __user *buf, size_t count,
     size_t count_copy ;
     int gonna_read ;
 
-    char *buffer = kmalloc(count, GFP_KERNEL);
+    char *buffer ;
+    struct LIFO_pipe *lifo_obj;
+
+    lifo_obj = filp->private_data;
+
+    if(main_file_offset == 0){
+        char* eof = {(char)4};  // ASCII code for CTRL-D
+
+        printk(KERN_INFO "LIFO_reader: Nothing to read, returning EOF \n");
+
+        if (copy_to_user(buf, eof, 1)) {
+            return -EFAULT;
+        }
+
+
+        return 1;
+
+
+    }
+
+    printk(KERN_INFO "LIFO_reader: my type %d\n", lifo_obj->my_type);
+
+
+    if(lifo_obj->my_type != READER){
+        return -1;
+    }
+
+    buffer = kmalloc(count, GFP_KERNEL);
     if (!buffer) {
         printk(KERN_ALERT "Unable to allocate");
         return -1;
     }
+
+    
 
     buffer_offset = 0;
 
@@ -196,44 +227,51 @@ ssize_t	LIFO_writer(struct file *filp, const char __user *buf, size_t count, lof
 
     struct LIFO_pipe *lifo_obj;
     int offset ;
-    ssize_t retval;
-
+    int signed_count;
+    int retval;
 
     lifo_obj = filp->private_data;
 
+    printk(KERN_INFO "LIFO_writer: my type %d\n", lifo_obj->my_type);
+
+
+    if(lifo_obj->my_type != WRITER){
+        return -1;
+    }
+
     offset = 0;
-    retval = count;
+    signed_count = (int) count;
 
 
     printk(KERN_INFO "LIFO_writer: Started Writing \n");
 
     mutex_lock(&lck);
 
-    char* temp_buffer;
+    do{
 
-    temp_buffer = kmalloc(count, GFP_KERNEL);
-    
-    if (!temp_buffer) {
-        printk(KERN_ALERT "Data not allocated for temp_buffer: %d \n", count);
-        return -ENOMEM;
-    }
+        
+        
+        if (copy_from_user(temp_buffer, buf + offset, MIN(signed_count,BUFFERSIZE )) != 0)
+        {
+            	mutex_unlock(&lck);
+		        return -EFAULT;
+        }
 
-    // temp_buffer[BUFFERSIZE] = '\0';
+        printk(KERN_INFO "LIFO_writer: Copied from user space: %s\n", temp_buffer);
 
-    if (copy_from_user(temp_buffer, buf, count) != 0)
-    {
-            mutex_unlock(&lck);
-            return -EFAULT;
-    }
+        printk(KERN_INFO "LIFO_writer: %s\n", temp_buffer);
+        
+        retval = kernel_write(main_file, temp_buffer ,  MIN(signed_count,BUFFERSIZE ), &main_file_offset);
+        printk(KERN_INFO "LIFO_writer: Written to main file: %d\n", retval);
 
-    printk(KERN_INFO "LIFO_writer: Copied from user space: %s\n", temp_buffer);
-    printk(KERN_INFO "LIFO_writer: %s\n", temp_buffer);
-    
-    retval = kernel_write(main_file, temp_buffer ,  count, &main_file_offset);
+        printk(KERN_INFO "LIFO_writer: main_file_offset after writing to %lld\n", main_file_offset);
 
-    printk(KERN_INFO "LIFO_writer: Written to main file: %zd\n", retval);
 
-    printk(KERN_INFO "LIFO_writer: main_file_offset after writing to %lld\n", main_file_offset);
+        offset += BUFFERSIZE;
+        signed_count -= BUFFERSIZE;
+
+
+    }while(signed_count > 0);
 
     mutex_unlock(&lck);
 
@@ -242,10 +280,9 @@ ssize_t	LIFO_writer(struct file *filp, const char __user *buf, size_t count, lof
     printk(KERN_INFO "Exiting LIFO_writer\n");
 
 
-    return retval;
+    return count;
 
 }
-
 
 
 
@@ -310,15 +347,15 @@ static int __init LIFO_init(void)
         return -1;
     }
 
-    // temp_buffer = kmalloc(BUFFERSIZE + 1, GFP_KERNEL);
+    temp_buffer = kmalloc(BUFFERSIZE + 1, GFP_KERNEL);
     
-    // if (!temp_buffer) {
-    //     printk(KERN_ALERT "Data not allocated for temp_buffer: %d \n", BUFFERSIZE);
-    //     return -ENOMEM;
-    // }
+    if (!temp_buffer) {
+        printk(KERN_ALERT "Data not allocated for temp_buffer: %d \n", BUFFERSIZE);
+        return -ENOMEM;
+    }
 
-    // // Added so that I can easily printk these chunks;
-    // temp_buffer[BUFFERSIZE] = '\0';
+    // Added so that I can easily printk these chunks;
+    temp_buffer[BUFFERSIZE] = '\0';
 
     printk(KERN_INFO "Lifo device added, major number given is %d\n",MAJOR(LIFO_char_dev));
 

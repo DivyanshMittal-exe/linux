@@ -10,15 +10,21 @@
 char message[] = "Hello, this is a test message!";
 
 void writer(int fd) {
+
+
     std::cout << "Writer thread started\n";
     for(int i = 0; i < 10; i++){
             ssize_t bytes_written = write(fd, message, sizeof(message)-1);
             std::cout << "Writer wrote " << bytes_written << " bytes\n";
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
 }
 
 void reader(int fd) {
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
     std::cout << "Reader thread started\n";
     int size_to_read = 10*(sizeof(message)-1);
 
