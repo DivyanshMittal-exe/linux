@@ -51,7 +51,7 @@ static struct mutex lck;
 wait_queue_head_t waiting_readers;
 
 
-char* temp_buffer;
+
 struct file *main_file = NULL;
 loff_t main_file_offset = 0;
 
@@ -113,7 +113,8 @@ static ssize_t LIFO_reader (struct file *filp, char __user *buf, size_t count,
 
     char *buffer = kmalloc(count, GFP_KERNEL);
     if (!buffer) {
-    
+        printk(KERN_ALERT "Unable to allocate");
+        return -1;
     }
 
     buffer_offset = 0;
@@ -137,12 +138,13 @@ static ssize_t LIFO_reader (struct file *filp, char __user *buf, size_t count,
             if (wait_event_interruptible(waiting_readers, (main_file_offset != 0)))
                 return -ERESTARTSYS;
                 
-
+            
+            printk(KERN_INFO "LIFO_reader: Lock acquired after waiting\n");
             mutex_lock(&lck);
         }
 
         gonna_read =  MIN(count, main_file_offset);
-                printk(KERN_INFO "LIFO_reader: gonna_read = %d\n", gonna_read);
+        printk(KERN_INFO "LIFO_reader: gonna_read = %d\n", gonna_read);
 
         main_file_offset-= gonna_read;
         printk(KERN_INFO "LIFO_reader: main_file_offset updated to %lld\n", main_file_offset);
@@ -166,6 +168,9 @@ static ssize_t LIFO_reader (struct file *filp, char __user *buf, size_t count,
 
     }
 
+    printk(KERN_INFO "LIFO_reader: Finally buffer is %s\n", buffer);
+
+
     for(int i = 0; i < count_copy/2; i++){
         char temp1 = buffer[i];
         char temp2 = buffer[count_copy - 1 - i];
@@ -173,9 +178,10 @@ static ssize_t LIFO_reader (struct file *filp, char __user *buf, size_t count,
         buffer[count_copy - 1 - i] = temp1;
     }
 
+    printk(KERN_INFO "LIFO_reader: Reversed buffer is %s\n", buffer);
 
 
-    if (copy_to_user(buf, buffer, retval)) {
+    if (copy_to_user(buf, buffer, count_copy)) {
         return -EFAULT;
     }
 
@@ -196,38 +202,38 @@ ssize_t	LIFO_writer(struct file *filp, const char __user *buf, size_t count, lof
     lifo_obj = filp->private_data;
 
     offset = 0;
-     retval = count;
+    retval = count;
 
 
     printk(KERN_INFO "LIFO_writer: Started Writing \n");
 
     mutex_lock(&lck);
 
-    do{
+    char* temp_buffer;
 
-        
-        
-        if (copy_from_user(temp_buffer, buf + offset, MIN(count,BUFFERSIZE )) != 0)
-        {
-            	mutex_unlock(&lck);
-		        return -EFAULT;
-        }
+    temp_buffer = kmalloc(count, GFP_KERNEL);
+    
+    if (!temp_buffer) {
+        printk(KERN_ALERT "Data not allocated for temp_buffer: %d \n", count);
+        return -ENOMEM;
+    }
 
-        printk(KERN_INFO "LIFO_writer: Copied from user space: %s\n", temp_buffer);
+    // temp_buffer[BUFFERSIZE] = '\0';
 
-        printk(KERN_INFO "LIFO_writer: %s\n", temp_buffer);
-        
-        retval = kernel_write(main_file, temp_buffer ,  MIN(count,BUFFERSIZE ), &main_file_offset);
-        printk(KERN_INFO "LIFO_writer: Written to main file: %zd\n", retval);
+    if (copy_from_user(temp_buffer, buf, count) != 0)
+    {
+            mutex_unlock(&lck);
+            return -EFAULT;
+    }
 
-        printk(KERN_INFO "LIFO_writer: main_file_offset after writing to %lld\n", main_file_offset);
+    printk(KERN_INFO "LIFO_writer: Copied from user space: %s\n", temp_buffer);
+    printk(KERN_INFO "LIFO_writer: %s\n", temp_buffer);
+    
+    retval = kernel_write(main_file, temp_buffer ,  count, &main_file_offset);
 
+    printk(KERN_INFO "LIFO_writer: Written to main file: %zd\n", retval);
 
-        offset += BUFFERSIZE;
-        count -= BUFFERSIZE;
-
-
-    }while(count > 0);
+    printk(KERN_INFO "LIFO_writer: main_file_offset after writing to %lld\n", main_file_offset);
 
     mutex_unlock(&lck);
 
@@ -304,15 +310,15 @@ static int __init LIFO_init(void)
         return -1;
     }
 
-    temp_buffer = kmalloc(BUFFERSIZE + 1, GFP_KERNEL);
+    // temp_buffer = kmalloc(BUFFERSIZE + 1, GFP_KERNEL);
     
-    if (!temp_buffer) {
-        printk(KERN_ALERT "Data not allocated for temp_buffer: %d \n", BUFFERSIZE);
-        return -ENOMEM;
-    }
+    // if (!temp_buffer) {
+    //     printk(KERN_ALERT "Data not allocated for temp_buffer: %d \n", BUFFERSIZE);
+    //     return -ENOMEM;
+    // }
 
-    // Added so that I can easily printk these chunks;
-    temp_buffer[BUFFERSIZE] = '\0';
+    // // Added so that I can easily printk these chunks;
+    // temp_buffer[BUFFERSIZE] = '\0';
 
     printk(KERN_INFO "Lifo device added, major number given is %d\n",MAJOR(LIFO_char_dev));
 
