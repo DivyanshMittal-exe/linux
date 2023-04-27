@@ -1,0 +1,8 @@
+config LIFO_CHAR_DEVICE
+    tristate "LIFO Character Device Driver"
+    default y
+    help
+      This driver provides two virtual LIFO devices that use the same driver. One of the
+      devices is read-only, while the other is write-only. The characters written to the
+      write-only device can only be read from the read-only device. Reading from an empty
+      LIFO device returns an EOF.
