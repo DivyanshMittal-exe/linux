@@ -85,7 +85,6 @@ static int LIFO_open(struct inode *inode, struct file *filp)
     mutex_lock(&lck);
 
 
-
 	if (filp->f_mode & FMODE_READ){
         lif_dev->my_type = READER;
     }else if(filp->f_mode & FMODE_WRITE){
@@ -119,20 +118,17 @@ static ssize_t LIFO_reader (struct file *filp, char __user *buf, size_t count,
 
     lifo_obj = filp->private_data;
 
-    // if(main_file_offset == 0){
-    //     char* eof = {(char)4};  // ASCII code for CTRL-D
+    if(stack_size == 1){
+        char* eof = {(char)4};  // ASCII code for CTRL-D
 
-    //     printk(KERN_INFO "LIFO_reader: Nothing to read, returning EOF \n");
+        printk(KERN_INFO "LIFO_reader: Nothing to read, returning EOF \n");
 
-    //     if (copy_to_user(buf, eof, 1)) {
-    //         return -EFAULT;
-    //     }
+        if (copy_to_user(buf, eof, 1)) {
+            return -EFAULT;
+        }
 
-
-    //     return 1;
-
-
-    // }
+        return 1;
+    }
 
     printk(KERN_INFO "LIFO_reader: my type %d\n", lifo_obj->my_type);
 
@@ -190,8 +186,6 @@ static ssize_t LIFO_reader (struct file *filp, char __user *buf, size_t count,
         memcpy(buffer + buffer_offset, stack_as_buffer + stack_size, gonna_read);
 
         
-        printk(KERN_INFO "LIFO_reader: main_file_offset after reading to %d\n", stack_size);
-        printk(KERN_INFO "LIFO_reader: buffer_offset is %d\n", buffer_offset);
         printk(KERN_INFO "LIFO_reader: buffer stats is %s\n", buffer);
 
         // main_file_offset-= gonna_read;
@@ -240,7 +234,7 @@ ssize_t	LIFO_writer(struct file *filp, const char __user *buf, size_t count, lof
 
     lifo_obj = filp->private_data;
 
-    printk(KERN_INFO "LIFO_writer: my type %d\n", lifo_obj->my_type);
+    printk(KERN_NOTICE "LIFO_writer: my type %d\n", lifo_obj->my_type);
 
 
     if(lifo_obj->my_type != WRITER){
@@ -248,9 +242,10 @@ ssize_t	LIFO_writer(struct file *filp, const char __user *buf, size_t count, lof
     }
 
 
-    printk(KERN_INFO "LIFO_writer: I was allowed to write\n");
+    printk(KERN_NOTICE "LIFO_writer: I was allowed to write\n");
 
     if(!stack_as_buffer){
+        printk(KERN_DEBUG "LIFO_writer: Stack Buffer Initialised\n");
         stack_as_buffer = kmalloc(1, GFP_KERNEL);
     }
 
@@ -260,14 +255,10 @@ ssize_t	LIFO_writer(struct file *filp, const char __user *buf, size_t count, lof
 
 
 
-    printk(KERN_INFO "LIFO_writer: Started Writing %d \n", stack_size);
-    printk(KERN_INFO "LIFO_writer: Count it %d \n", count);
+    printk(KERN_NOTICE "LIFO_writer: Started Writing Stack-Size:%d Count:%d \n", stack_size,count);
 
 
     mutex_lock(&lck);
-
-    printk(KERN_INFO "LIFO_writer: Is it the lock ? %d \n", count);
-
 
 
     char *new_stack_as_buffer = kmalloc(stack_size + count, GFP_KERNEL);
@@ -279,14 +270,9 @@ ssize_t	LIFO_writer(struct file *filp, const char __user *buf, size_t count, lof
 
     memcpy(new_stack_as_buffer, stack_as_buffer, stack_size);
 
-    printk(KERN_INFO "LIFO_writer: Mem Copied \n");
-
-
     kfree(stack_as_buffer);
 
     stack_as_buffer = new_stack_as_buffer;
-
-    printk(KERN_INFO "LIFO_writer: Starting copy\n");
 
 
     if (copy_from_user(stack_as_buffer + stack_size, buf, count) != 0)
@@ -298,11 +284,14 @@ ssize_t	LIFO_writer(struct file *filp, const char __user *buf, size_t count, lof
 
     stack_size += count;
 
+    printk(KERN_NOTICE "LIFO_writer: Stack_Status :%s stack_size:%d \n", stack_as_buffer + 1,stack_size);
+
+
     mutex_unlock(&lck);
 
     wake_up_interruptible(&waiting_readers);
 
-    printk(KERN_INFO "Exiting LIFO_writer\n");
+    printk(KERN_NOTICE "Exiting LIFO_writer\n");
 
 
     return count;
