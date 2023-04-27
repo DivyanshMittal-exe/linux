@@ -24,3 +24,9 @@ test: tester.cpp
 
 test_run: test
 	./test
+
+test_lkm: tester_lkm.cpp
+	g++ -Wall -Wextra -std=c++17 -pthread tester_lkm.cpp -o test_lkm
+
+test_run_lkm: test_lkm
+	./test_lkm

@@ -245,6 +245,18 @@ ssize_t	LIFO_writer(struct file *filp, const char __user *buf, size_t count, lof
 
     printk(KERN_INFO "LIFO_writer: Started Writing \n");
 
+    if(!temp_buffer){
+            temp_buffer = kmalloc(BUFFERSIZE + 1, GFP_KERNEL);
+    
+        if (!temp_buffer) {
+            printk(KERN_ALERT "Data not allocated for temp_buffer: %d \n", BUFFERSIZE);
+            return -ENOMEM;
+        }
+
+        // Added so that I can easily printk these chunks;
+        temp_buffer[BUFFERSIZE] = '\0';
+    }
+
     mutex_lock(&lck);
 
     do{
@@ -298,7 +310,7 @@ struct file_operations LIFO_proc_ops = {
 static int __init LIFO_init(void)
 {
 
-    if (alloc_chrdev_region(&LIFO_char_dev, 0, NO_OF_DEVICES, "LIFO_CHAR_DEVICE") < 0)
+    if (alloc_chrdev_region(&LIFO_char_dev, 0, NO_OF_DEVICES, "LIFO_CHAR_DEVICE_LKM") < 0)
     {
         printk(KERN_ALERT "Unable to allocate major-MINor number\n");
         return -1;
@@ -311,7 +323,7 @@ static int __init LIFO_init(void)
 		return -1;
 	}
 
-    LIFO_class = class_create(THIS_MODULE, "LIFO_CHAR_DEVICE");
+    LIFO_class = class_create(THIS_MODULE, "LIFO_CHAR_DEVICE_LKM");
 
 
     for (size_t i = 0; i < NO_OF_DEVICES; i++)
@@ -326,7 +338,7 @@ static int __init LIFO_init(void)
             return -1;
         }
 
-        device_create(LIFO_class, NULL, MKDEV(MAJOR(LIFO_char_dev), i), NULL, "LIFO_CHAR_DEVICE%ld", i);
+        device_create(LIFO_class, NULL, MKDEV(MAJOR(LIFO_char_dev), i), NULL, "LIFO_CHAR_DEVICE_LKM%ld", i);
 
     }
 
