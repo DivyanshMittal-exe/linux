@@ -1,7 +1,6 @@
-#include <linux/module.h>  /* Specifically, a module */
-#include <linux/kernel.h>  /* We're doing kernel work */
-#include <linux/proc_fs.h> /* Necessary because we use the proc fs */
-// #include <linux/string.h>
+#include <linux/module.h>  
+#include <linux/kernel.h> 
+#include <linux/proc_fs.h> 
 #include <linux/errno.h>
 #include <linux/signal.h>
 #include <linux/kstrtox.h>
@@ -11,26 +10,20 @@
 #include <linux/spinlock.h>
 #include <linux/fs.h>
 
-#include <linux/module.h>
 #include <linux/moduleparam.h>
 
-#include <linux/kernel.h>	/* printk(), MIN() */
-#include <linux/slab.h>		/* kmalloc() */
-#include <linux/fs.h>		/* everything... */
-#include <linux/proc_fs.h>
 #include <linux/errno.h>	/* error codes */
 #include <linux/types.h>	/* size_t */
 #include <linux/fcntl.h>
 #include <linux/poll.h>
 #include <linux/cdev.h>
-#include <linux/sched.h>
 #include <asm/uaccess.h>
 
 #include <asm/segment.h>
-#include <asm/uaccess.h>
 #include <linux/buffer_head.h>
 
 #include<linux/mutex.h>
+
 
 #define NO_OF_DEVICES 4
 
@@ -58,7 +51,7 @@ struct file *main_file = NULL;
 // char* temp_buffer;
 
 char* stack_as_buffer;
-int stack_size = 1;
+volatile int stack_size = 1;
 
 static struct class *LIFO_class = NULL;
 
@@ -188,16 +181,16 @@ static ssize_t LIFO_reader (struct file *filp, char __user *buf, size_t count,
         stack_size -= gonna_read;
         printk(KERN_INFO "LIFO_reader: stack_size updated to %d\n", stack_size);
 
-        if(!main_file){
-            printk(KERN_INFO "LIFO: Reinitialised file\n");
-            init_file();
-        }
+        // if(!main_file){
+        //     printk(KERN_INFO "LIFO: Reinitialised file\n");
+        //     init_file();
+        // }
 
         // retval = vfs_read(main_file, buffer + buffer_offset, gonna_read , &main_file_offset);
         memcpy(buffer + buffer_offset, stack_as_buffer + stack_size, gonna_read);
 
         
-        printk(KERN_INFO "LIFO_reader: main_file_offset after reading to %lld\n", stack_size - 1);
+        printk(KERN_INFO "LIFO_reader: main_file_offset after reading to %d\n", stack_size);
         printk(KERN_INFO "LIFO_reader: buffer_offset is %d\n", buffer_offset);
         printk(KERN_INFO "LIFO_reader: buffer stats is %s\n", buffer);
 
@@ -254,7 +247,12 @@ ssize_t	LIFO_writer(struct file *filp, const char __user *buf, size_t count, lof
         return -1;
     }
 
+
     printk(KERN_INFO "LIFO_writer: I was allowed to write\n");
+
+    if(!stack_as_buffer){
+        stack_as_buffer = kmalloc(1, GFP_KERNEL);
+    }
 
     offset = 0;
     signed_count = (int) count;
@@ -262,10 +260,15 @@ ssize_t	LIFO_writer(struct file *filp, const char __user *buf, size_t count, lof
 
 
 
-    printk(KERN_INFO "LIFO_writer: Started Writing \n");
+    printk(KERN_INFO "LIFO_writer: Started Writing %d \n", stack_size);
+    printk(KERN_INFO "LIFO_writer: Count it %d \n", count);
 
 
     mutex_lock(&lck);
+
+    printk(KERN_INFO "LIFO_writer: Is it the lock ? %d \n", count);
+
+
 
     char *new_stack_as_buffer = kmalloc(stack_size + count, GFP_KERNEL);
 
@@ -275,6 +278,9 @@ ssize_t	LIFO_writer(struct file *filp, const char __user *buf, size_t count, lof
     }
 
     memcpy(new_stack_as_buffer, stack_as_buffer, stack_size);
+
+    printk(KERN_INFO "LIFO_writer: Mem Copied \n");
+
 
     kfree(stack_as_buffer);
 
@@ -358,13 +364,13 @@ static int __init LIFO_init(void)
 	mutex_init(&lck);
 
 
-    init_file();
+    // init_file();
 
 
-    if (IS_ERR(main_file)) {
-        printk(KERN_ALERT "Failed to open file %s: %ld\n", FILENAME, PTR_ERR(main_file));
-        return -1;
-    }
+    // if (IS_ERR(main_file)) {
+    //     printk(KERN_ALERT "Failed to open file %s: %ld\n", FILENAME, PTR_ERR(main_file));
+    //     return -1;
+    // }
 
     stack_as_buffer = kmalloc(1, GFP_KERNEL);
     
@@ -372,7 +378,7 @@ static int __init LIFO_init(void)
         printk(KERN_ALERT "Data not allocated for stack_as_buffer: %d \n", BUFFERSIZE);
         return -ENOMEM;
     }
-    stack_as_buffer[0] = 4;
+    stack_as_buffer[0] = (char)4;
 
     stack_size = 1;
 
@@ -394,7 +400,7 @@ static int __init LIFO_init(void)
 static void __exit LIFO_exit(void)
 {
 
-    main_file_offset = 0;
+    stack_size = 1;
 
     for (size_t i = 0; i < NO_OF_DEVICES; i++)
     {
