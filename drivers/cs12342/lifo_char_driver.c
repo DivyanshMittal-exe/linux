@@ -25,14 +25,24 @@
 #include<linux/mutex.h>
 
 
+#include <linux/ioctl.h> 
+
+#define LIFO_IOC_MAGIC  'D'
+
+#define LIFO_IOCRESET    _IO(LIFO_IOC_MAGIC, 0)
+
+#define LIFO_DATA_AVBL  _IOR(LIFO_IOC_MAGIC, 1,int)
+#define LIFO_REF_COUNT  _IOR(LIFO_IOC_MAGIC, 2,int)
+
+
 #define NO_OF_DEVICES 4
 
 #define BUFFERSIZE (12)
 
 #define FILENAME "/tmp/driver_rw_storage"
 
+#define INVALID 0
 #define READER 2
-
 #define WRITER 3
 
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
@@ -58,6 +68,7 @@ static struct class *LIFO_class = NULL;
 
 struct LIFO_pipe {
         int my_type;
+        int nr_users;
         struct cdev char_dev;                  /* Char device structure */
 };
 
@@ -84,13 +95,22 @@ static int LIFO_open(struct inode *inode, struct file *filp)
 
     mutex_lock(&lck);
 
-
-	if (filp->f_mode & FMODE_READ){
-        lif_dev->my_type = READER;
-    }else if(filp->f_mode & FMODE_WRITE){
-        lif_dev->my_type = WRITER;
+    if(lif_dev->my_type == READER){
+        if(!(filp->f_mode & FMODE_READ)){
+            return -EINVAL;
+        }
+    }else if( lif_dev->my_type == WRITER ){
+        if(!(filp->f_mode & FMODE_WRITE)){
+            return -EINVAL;
+        }
+    }else{
+        lif_dev ->nr_users += 1;
+        if (filp->f_mode & FMODE_READ){
+            lif_dev->my_type = READER;
+        }else if(filp->f_mode & FMODE_WRITE){
+            lif_dev->my_type = WRITER;
+        }
     }
-
 
 	mutex_unlock(&lck);
 
@@ -112,18 +132,38 @@ static ssize_t LIFO_reader (struct file *filp, char __user *buf, size_t count,
     int buffer_offset ;
     size_t count_copy ;
     int gonna_read ;
+    char eof;
 
     char *buffer ;
     struct LIFO_pipe *lifo_obj;
 
+
+
+    if (!filp || !filp->private_data) {
+        printk(KERN_ALERT "LIFO_reader: Invalid file object or private data\n");
+        return -EINVAL;
+    }
+
+    if (!buf) {
+        printk(KERN_ALERT "LIFO_reader: Invalid buffer pointer\n");
+        return -EFAULT;
+    }
+
+    if (count == 0) {
+        printk(KERN_INFO "LIFO_reader: No data to read\n");
+        return 0;
+    }
+
     lifo_obj = filp->private_data;
 
+
     if(stack_size == 1){
-        char* eof = {(char)4};  // ASCII code for CTRL-D
+        eof = 5;  // ASCII code for CTRL-D
 
         printk(KERN_INFO "LIFO_reader: Nothing to read, returning EOF \n");
 
-        if (copy_to_user(buf, eof, 1)) {
+        if (copy_to_user(buf, &eof, 1)) {
+            printk(KERN_ERR "LIFO_reader: Failed to copy data to user space\n");
             return -EFAULT;
         }
 
@@ -134,20 +174,21 @@ static ssize_t LIFO_reader (struct file *filp, char __user *buf, size_t count,
 
 
     if(lifo_obj->my_type != READER){
-        return -1;
+        printk(KERN_ERR "LIFO_reader: Invalid file operation\n");
+        return -EINVAL;
     }
 
     buffer = kmalloc(count, GFP_KERNEL);
     if (!buffer) {
         printk(KERN_ALERT "Unable to allocate");
-        return -1;
+        return -ENOMEM;
     }
 
     
 
     buffer_offset = 0;
 
-
+    retval= count;
     count_copy = count;
 
     while(count){
@@ -220,7 +261,7 @@ static ssize_t LIFO_reader (struct file *filp, char __user *buf, size_t count,
 
     kfree(buffer);
 
-    return count_copy;
+    return retval;
 
 }
 
@@ -230,7 +271,23 @@ ssize_t	LIFO_writer(struct file *filp, const char __user *buf, size_t count, lof
     struct LIFO_pipe *lifo_obj;
     int offset ;
     int signed_count;
-    int retval;
+    // int retval;
+    char *new_stack_as_buffer;
+
+    if (!filp || !filp->private_data) {
+        printk(KERN_ALERT "LIFO_reader: Invalid file object or private data\n");
+        return -EINVAL;
+    }
+
+    if (!buf) {
+        printk(KERN_ALERT "LIFO_reader: Invalid buffer pointer\n");
+        return -EFAULT;
+    }
+
+    if (count == 0) {
+        printk(KERN_INFO "LIFO_reader: No data to read\n");
+        return 0;
+    }
 
     lifo_obj = filp->private_data;
 
@@ -238,7 +295,8 @@ ssize_t	LIFO_writer(struct file *filp, const char __user *buf, size_t count, lof
 
 
     if(lifo_obj->my_type != WRITER){
-        return -1;
+        printk(KERN_ERR "LIFO_writer: Invalid file operation\n");
+        return -EINVAL;
     }
 
 
@@ -254,14 +312,13 @@ ssize_t	LIFO_writer(struct file *filp, const char __user *buf, size_t count, lof
 
 
 
-
-    printk(KERN_NOTICE "LIFO_writer: Started Writing Stack-Size:%d Count:%d \n", stack_size,count);
+    printk(KERN_NOTICE "LIFO_writer: Started Writing Stack-Size:%d Count:%d \n", stack_size,signed_count);
 
 
     mutex_lock(&lck);
 
 
-    char *new_stack_as_buffer = kmalloc(stack_size + count, GFP_KERNEL);
+    new_stack_as_buffer = kmalloc(stack_size + count, GFP_KERNEL);
 
     if (!new_stack_as_buffer) {
         printk(KERN_ERR "Failed to allocate memory for new buffer\n");
@@ -299,6 +356,98 @@ ssize_t	LIFO_writer(struct file *filp, const char __user *buf, size_t count, lof
 }
 
 
+static unsigned int LIFO_poll(struct file *filp, poll_table *wait)
+{
+	struct LIFO_pipe *lifo_obj;
+	unsigned int mask;
+
+    printk(KERN_ALERT "LIFO_poll: Poll operation performed\n");    
+
+    mask = POLLOUT | POLLWRNORM;
+    lifo_obj = filp->private_data;
+
+	if (stack_size > 1)
+        printk(KERN_ALERT "LIFO_poll: Data available\n");    
+
+		mask |= POLLIN | POLLRDNORM;
+	return mask;
+}
+
+static int LIFO_release(struct inode *inode, struct file *filp)
+{
+	struct LIFO_pipe *lifo_obj;
+
+
+    if (!filp || !filp->private_data) {
+        printk(KERN_ALERT "LIFO_release: Invalid file object or private data\n");
+        return -EINVAL;
+    }
+    
+
+    lifo_obj = filp->private_data;
+
+
+	mutex_lock(&lck);
+    lifo_obj->nr_users -= 1;
+    printk(KERN_ALERT "LIFO_release: Current users %d\n", lifo_obj->nr_users );
+
+    if(lifo_obj->nr_users == 0){
+        lifo_obj->my_type = INVALID;
+    }
+
+    mutex_unlock(&lck);
+	return 0;
+}
+
+
+long LIFO_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+{
+
+
+	int retval;
+    struct LIFO_pipe *lifo_obj;
+
+    printk(KERN_ALERT "LIFO_ioctl: IOCTL performed" );
+
+
+    if (!filp || !filp->private_data) {
+        printk(KERN_ALERT "LIFO_reader: Invalid file object or private data\n");
+        return -EINVAL;
+    }
+    
+
+    lifo_obj = filp->private_data;
+    retval = 0;
+    
+	if (_IOC_TYPE(cmd) != LIFO_IOC_MAGIC){
+        printk(KERN_INFO "LIFO_IOC_MAGIC error \n");
+        return -ENOTTY;
+    }
+
+    switch(cmd) {
+       case LIFO_IOCRESET:
+            printk(KERN_ALERT "LIFO_ioctl: Stack Reset" );
+           stack_size = 1;
+           break;
+
+        case LIFO_DATA_AVBL:
+            printk(KERN_ALERT "LIFO_ioctl: Data queried" );
+            retval = __put_user(stack_size - 1, (int __user *)arg);
+
+            break;
+        case  LIFO_REF_COUNT:
+            printk(KERN_ALERT "LIFO_ioctl: Users queried" );
+            retval = __put_user(lifo_obj->nr_users, (int __user *)arg);
+            break;
+
+
+	  default: 
+		return -ENOTTY;
+    }
+
+    return retval;
+
+}
 
 
 struct file_operations LIFO_proc_ops = {
@@ -306,6 +455,10 @@ struct file_operations LIFO_proc_ops = {
 	.read =		LIFO_reader,
 	.write =	LIFO_writer,
 	.open =		LIFO_open,
+    .llseek =	no_llseek,
+	.poll =		LIFO_poll,
+	.unlocked_ioctl = LIFO_ioctl,
+	.release =	LIFO_release,
 };
 
 
@@ -332,6 +485,9 @@ static int __init LIFO_init(void)
     {
         cdev_init(&(LIFO_devices + i)->char_dev, &LIFO_proc_ops);
         (LIFO_devices + i)->char_dev.owner = THIS_MODULE;
+
+        (LIFO_devices + i)->my_type = INVALID;
+        (LIFO_devices + i)->nr_users = 0;
 
         if (cdev_add(&((LIFO_devices + i)->char_dev), LIFO_char_dev + i, 1) < 0)
         {
