@@ -47,6 +47,7 @@
 
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 
+int total_writer_count = 0;
 
 // struct semaphore lck;   
 static struct mutex lck;
@@ -90,7 +91,9 @@ static int LIFO_open(struct inode *inode, struct file *filp)
 	struct LIFO_pipe *lif_dev;
 
 	lif_dev = container_of(inode->i_cdev, struct LIFO_pipe, char_dev);
-	filp->private_data = lif_dev;
+	filp->private_data = lif_dev;  
+
+
 
 
     mutex_lock(&lck);
@@ -108,6 +111,7 @@ static int LIFO_open(struct inode *inode, struct file *filp)
         if (filp->f_mode & FMODE_READ){
             lif_dev->my_type = READER;
         }else if(filp->f_mode & FMODE_WRITE){
+            total_writer_count += 1;
             lif_dev->my_type = WRITER;
         }
     }
@@ -132,7 +136,8 @@ static ssize_t LIFO_reader (struct file *filp, char __user *buf, size_t count,
     int buffer_offset ;
     size_t count_copy ;
     int gonna_read ;
-    char eof;
+
+    unsigned int is_non_blocking;
 
     char *buffer ;
     struct LIFO_pipe *lifo_obj;
@@ -156,19 +161,7 @@ static ssize_t LIFO_reader (struct file *filp, char __user *buf, size_t count,
 
     lifo_obj = filp->private_data;
 
-
-    if(stack_size == 1){
-        eof = 5;  // ASCII code for CTRL-D
-
-        printk(KERN_INFO "LIFO_reader: Nothing to read, returning EOF \n");
-
-        if (copy_to_user(buf, &eof, 1)) {
-            printk(KERN_ERR "LIFO_reader: Failed to copy data to user space\n");
-            return -EFAULT;
-        }
-
-        return 1;
-    }
+    is_non_blocking =     (filp->f_flags & O_NONBLOCK);
 
     printk(KERN_INFO "LIFO_reader: my type %d\n", lifo_obj->my_type);
 
@@ -184,8 +177,9 @@ static ssize_t LIFO_reader (struct file *filp, char __user *buf, size_t count,
         return -ENOMEM;
     }
 
-    
+    memset(buffer, 0, count);
 
+    
     buffer_offset = 0;
 
     retval= count;
@@ -199,12 +193,12 @@ static ssize_t LIFO_reader (struct file *filp, char __user *buf, size_t count,
         
 
 
-        while (stack_size <= 1) { 
+        while (stack_size <= 1 && total_writer_count != 0 && !is_non_blocking) { 
             printk(KERN_INFO "LIFO_reader: released, nothing to read lock\n");
             mutex_unlock(&lck);
 
         
-            if (wait_event_interruptible(waiting_readers, (stack_size > 1)))
+            if (wait_event_interruptible(waiting_readers, (stack_size > 1  || total_writer_count == 0)))
                 return -ERESTARTSYS;
                 
             
@@ -218,21 +212,12 @@ static ssize_t LIFO_reader (struct file *filp, char __user *buf, size_t count,
         stack_size -= gonna_read;
         printk(KERN_INFO "LIFO_reader: stack_size updated to %d\n", stack_size);
 
-        // if(!main_file){
-        //     printk(KERN_INFO "LIFO: Reinitialised file\n");
-        //     init_file();
-        // }
-
-        // retval = vfs_read(main_file, buffer + buffer_offset, gonna_read , &main_file_offset);
         memcpy(buffer + buffer_offset, stack_as_buffer + stack_size, gonna_read);
 
         
         printk(KERN_INFO "LIFO_reader: buffer stats is %s\n", buffer);
 
-        // main_file_offset-= gonna_read;
         printk(KERN_INFO "LIFO_reader: vfs_read returned %d bytes\n", retval);
-
-
 
         count -= gonna_read;
         buffer_offset += gonna_read;
@@ -240,16 +225,26 @@ static ssize_t LIFO_reader (struct file *filp, char __user *buf, size_t count,
         printk(KERN_INFO "LIFO_reader: releasing mutex lock\n");
         mutex_unlock(&lck);
 
+        if(total_writer_count == 0 || is_non_blocking){
+            printk(KERN_INFO "LIFO_reader: No writer or non blocking\n");
+            break;
+        }
+
     }
 
     printk(KERN_INFO "LIFO_reader: Finally buffer is %s\n", buffer);
 
 
-    for(int i = 0; i < count_copy/2; i++){
+    for(int i = 0; i < buffer_offset/2; i++){
         char temp1 = buffer[i];
-        char temp2 = buffer[count_copy - 1 - i];
+        char temp2 = buffer[buffer_offset - 1 - i];
         buffer[i] = temp2;
-        buffer[count_copy - 1 - i] = temp1;
+        buffer[buffer_offset - 1 - i] = temp1;
+    }
+
+    if(buffer_offset < count){
+        buffer[buffer_offset] = 5;
+        buffer_offset += 1;
     }
 
     printk(KERN_INFO "LIFO_reader: Reversed buffer is %s\n", buffer);
@@ -261,7 +256,11 @@ static ssize_t LIFO_reader (struct file *filp, char __user *buf, size_t count,
 
     kfree(buffer);
 
-    return retval;
+    if(total_writer_count == 0){
+        wake_up_interruptible(&waiting_readers);
+    }
+
+    return buffer_offset;
 
 }
 
@@ -358,18 +357,17 @@ ssize_t	LIFO_writer(struct file *filp, const char __user *buf, size_t count, lof
 
 static unsigned int LIFO_poll(struct file *filp, poll_table *wait)
 {
-	struct LIFO_pipe *lifo_obj;
 	unsigned int mask;
 
     printk(KERN_ALERT "LIFO_poll: Poll operation performed\n");    
 
     mask = POLLOUT | POLLWRNORM;
-    lifo_obj = filp->private_data;
 
-	if (stack_size > 1)
+	if (stack_size > 1){
         printk(KERN_ALERT "LIFO_poll: Data available\n");    
-
 		mask |= POLLIN | POLLRDNORM;
+    }
+
 	return mask;
 }
 
@@ -391,11 +389,20 @@ static int LIFO_release(struct inode *inode, struct file *filp)
     lifo_obj->nr_users -= 1;
     printk(KERN_ALERT "LIFO_release: Current users %d\n", lifo_obj->nr_users );
 
+    if(lifo_obj->my_type == WRITER){
+        total_writer_count --;
+    }
+
     if(lifo_obj->nr_users == 0){
         lifo_obj->my_type = INVALID;
     }
 
     mutex_unlock(&lck);
+
+    if(total_writer_count == 0){
+        wake_up_interruptible(&waiting_readers);
+    }
+
 	return 0;
 }
 
@@ -480,6 +487,7 @@ static int __init LIFO_init(void)
 
     LIFO_class = class_create(THIS_MODULE, "LIFO_CHAR_DEVICE");
 
+    total_writer_count = 0;
 
     for (size_t i = 0; i < NO_OF_DEVICES; i++)
     {
