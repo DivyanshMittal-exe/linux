@@ -35,7 +35,12 @@ void writer(int fd) {
             ssize_t bytes_written = write(fd, message, sizeof(message)-1);
             std::cout << "Writer wrote " << bytes_written << " bytes\n";
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            // if(i == 4){
+            //     break;
+            // }
     }
+
+    close(fd);
 
 }
 
@@ -91,8 +96,8 @@ void reader(int fd) {
     std::cout << "Reader read " << bytes_read << " bytes: " << buffer << std::endl;
 }
 
-int main() {
-    int fd_reader = open("/dev/LIFO_CHAR_DEVICE0", O_RDONLY);
+int main() { 
+    int fd_reader = open("/dev/LIFO_CHAR_DEVICE0", O_RDONLY );
     if (fd_reader < 0) {
         std::cerr << "Error opening device\n";
         return 1;
@@ -109,7 +114,6 @@ int main() {
     t2.join();
 
     close(fd_reader);
-    close(fd_writer);
 
     return 0;
 }
